@@ -1,26 +1,219 @@
 @import "tailwindcss";
 
+/* ------------------------------------------------------------------ */
+/*  ARTHA DESIGN TOKENS — dark-first premium fintech system           */
+/* ------------------------------------------------------------------ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Surfaces */
+  --bg: #07090d;
+  --bg-soft: #0a0e14;
+  --surface: #0d1219;
+  --surface-2: #111824;
+  --surface-3: #182130;
+  --edge: rgba(150, 168, 196, 0.12);
+  --edge-strong: rgba(150, 168, 196, 0.22);
+
+  /* Text */
+  --text-1: #e8eef6;
+  --text-2: #9aa9bc;
+  --text-3: #5f6d80;
+
+  /* Brand + semantics */
+  --gold: #d4a94f;
+  --gold-bright: #e3bd6d;
+  --gold-soft: rgba(212, 169, 79, 0.13);
+  --pos: #16c784;
+  --pos-soft: rgba(22, 199, 132, 0.12);
+  --neg: #ef4e63;
+  --neg-soft: rgba(239, 78, 99, 0.12);
+  --info: #5b8def;
+  --info-soft: rgba(91, 141, 239, 0.12);
+  --violet: #8b7cf6;
+  --violet-soft: rgba(139, 124, 246, 0.12);
+
+  /* Charts */
+  --chart-1: #5b8def;
+  --chart-2: #d4a94f;
+  --chart-3: #16c784;
+  --chart-4: #ef4e63;
+  --chart-5: #8b7cf6;
+  --chart-6: #3ec5c5;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-bg: var(--bg);
+  --color-bgsoft: var(--bg-soft);
+  --color-surface: var(--surface);
+  --color-surface2: var(--surface-2);
+  --color-surface3: var(--surface-3);
+  --color-edge: var(--edge);
+  --color-edgestrong: var(--edge-strong);
+  --color-ink: var(--text-1);
+  --color-secondary: var(--text-2);
+  --color-muted: var(--text-3);
+  --color-gold: var(--gold);
+  --color-goldbright: var(--gold-bright);
+  --color-goldsoft: var(--gold-soft);
+  --color-pos: var(--pos);
+  --color-possoft: var(--pos-soft);
+  --color-neg: var(--neg);
+  --color-negsoft: var(--neg-soft);
+  --color-info: var(--info);
+  --color-infosoft: var(--info-soft);
+  --color-violet: var(--violet);
+  --color-violetsoft: var(--violet-soft);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text-1);
+    font-family: var(--font-geist-sans), system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Subtle premium depth — faint gold/blue glows at the top */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(1000px 520px at 12% -12%, rgba(212, 169, 79, 0.055), transparent 62%),
+      radial-gradient(1000px 520px at 88% -12%, rgba(91, 141, 239, 0.05), transparent 62%);
+  }
+
+  ::selection {
+    background: rgba(212, 169, 79, 0.28);
+    color: #fff;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgba(212, 169, 79, 0.65);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Scrollbars */
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: #1b2433;
+    border-radius: 8px;
+    border: 2px solid var(--bg);
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: #263347;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer components {
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  .card {
+    @apply rounded-2xl border border-edge bg-surface;
+  }
+
+  .card-hover {
+    @apply transition-all duration-200 hover:border-edgestrong hover:bg-surface2;
+  }
+
+  .section-label {
+    @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-muted;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-edge bg-surface2/70 px-3 py-2 text-sm text-ink placeholder:text-muted transition-colors focus:border-gold/50 focus:bg-surface2 focus:outline-none;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-gold px-4 py-2 text-sm font-semibold text-[#171207] transition-all duration-150 hover:bg-goldbright active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-edge bg-transparent px-4 py-2 text-sm font-medium text-secondary transition-all duration-150 hover:border-edgestrong hover:bg-surface3 hover:text-ink active:scale-[0.98];
+  }
+
+  .btn-subtle {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-secondary transition-colors duration-150 hover:bg-surface3 hover:text-ink;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-edge bg-surface2/70 px-2.5 py-1 text-xs font-medium text-secondary;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Subtle page entrance */
+  .page-enter {
+    animation: fade-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .skeleton {
+    @apply relative overflow-hidden rounded-lg bg-surface2;
+  }
+  .skeleton::after {
+    content: "";
+    @apply absolute inset-0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
+    animation: shimmer 1.6s infinite;
+    transform: translateX(-100%);
+  }
+
+  .hide-scrollbar {
+    scrollbar-width: none;
+  }
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
