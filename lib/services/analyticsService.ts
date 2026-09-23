@@ -1,5 +1,3 @@
-import type { AnalyticsMetrics } from "@/lib/types";
-import { analytics } from "@/lib/mock/portfolio";
 import { delay } from "@/lib/services/delay";
 import { mulberry32 } from "@/lib/utils";
 
@@ -21,8 +19,7 @@ export interface MonteCarloResult {
 }
 
 export interface AnalyticsService {
-  getMetrics(): Promise<AnalyticsMetrics>;
-  /** Geometric Brownian-motion Monte Carlo — real math on sample parameters. */
+  /** Geometric Brownian-motion Monte Carlo — real math on user-entered parameters. */
   runMonteCarlo(params: MonteCarloParams): Promise<MonteCarloResult>;
 }
 
@@ -33,10 +30,6 @@ function percentile(sorted: number[], p: number): number {
 }
 
 export const analyticsService: AnalyticsService = {
-  async getMetrics() {
-    await delay(300);
-    return analytics;
-  },
   async runMonteCarlo(params) {
     await delay(500);
     const { initial, monthly, years, meanReturn, volatility, iterations, seed } = params;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Bell, Command, Menu, Search } from "lucide-react";
 import { cn, formatFullDate, istMarketOpen } from "@/lib/utils";
@@ -8,6 +9,7 @@ import { stockService } from "@/lib/services/stockService";
 import { marketService } from "@/lib/services/marketService";
 import { useAsync } from "@/lib/hooks/useAsync";
 import { useAppStore } from "@/lib/store/useAppStore";
+import { useAuthStore } from "@/lib/store/useAuthStore";
 
 const PAGE_TITLES: Record<string, string> = {
   "/": "Dashboard",
@@ -155,12 +157,6 @@ function SearchBox({ onNavigate }: { onNavigate?: () => void }) {
 
 function Notifications() {
   const [open, setOpen] = useState(false);
-  const items = [
-    { icon: "📈", title: "NVDA moved -2.23% today", meta: "Price alert · 2h ago", tone: "text-neg" },
-    { icon: "📰", title: "3 new AI summaries in News", meta: "News · 4h ago", tone: "text-info" },
-    { icon: "🎯", title: "Goal check: Emergency Fund is 70% funded", meta: "Goal · 1d ago", tone: "text-gold" },
-    { icon: "📄", title: "Your monthly portfolio report is ready", meta: "Report · 3d ago", tone: "text-secondary" },
-  ];
   return (
     <div className="relative">
       <button
@@ -169,7 +165,6 @@ function Notifications() {
         aria-label="Notifications"
       >
         <Bell size={16} />
-        <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-gold" />
       </button>
       {open && (
         <>
@@ -177,21 +172,14 @@ function Notifications() {
           <div className="absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-xl border border-edgestrong bg-surface3 shadow-2xl shadow-black/60">
             <div className="flex items-center justify-between border-b border-edge px-4 py-3">
               <span className="text-sm font-semibold text-ink">Notifications</span>
-              <span className="text-[11px] text-muted">Sample alerts</span>
+              <span className="text-[11px] text-muted">Not delivered yet</span>
             </div>
-            <div className="max-h-80 overflow-y-auto">
-              {items.map((n, i) => (
-                <button
-                  key={i}
-                  className="flex w-full items-start gap-3 border-b border-edge/60 px-4 py-3 text-left transition-colors last:border-0 hover:bg-surface2"
-                >
-                  <span className={cn("mt-0.5 text-base", n.tone)}>{n.icon}</span>
-                  <span>
-                    <span className="block text-[13px] font-medium leading-snug text-ink">{n.title}</span>
-                    <span className="mt-0.5 block text-[11px] text-muted">{n.meta}</span>
-                  </span>
-                </button>
-              ))}
+            <div className="px-4 py-6 text-center">
+              <p className="text-[13px] font-medium text-ink">No notifications yet</p>
+              <p className="mx-auto mt-1 max-w-[240px] text-[11.5px] leading-relaxed text-muted">
+                Artha doesn&apos;t send alerts yet — your notification choices are saved in Settings for when
+                delivery is switched on. Nothing is shown here to pretend otherwise.
+              </p>
             </div>
           </div>
         </>
@@ -203,6 +191,7 @@ function Notifications() {
 export function Topbar({ onMenu }: { onMenu?: () => void }) {
   const pathname = usePathname();
   const title = PAGE_TITLES[pathname] ?? "Artha";
+  const username = useAuthStore((s) => s.user?.username);
 
   return (
     <header className="sticky top-0 z-20 border-b border-edge bg-bg/70 backdrop-blur-xl">
@@ -228,12 +217,14 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
           <Notifications />
         </div>
 
-        <button
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-goldbright to-gold text-[13px] font-bold text-[#171207] ring-2 ring-gold/20 transition-transform hover:scale-105"
-          aria-label="Profile"
+        <Link
+          href="/settings"
+          className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-goldbright to-gold text-[13px] font-bold uppercase text-[#171207] ring-2 ring-gold/20 transition-transform hover:scale-105"
+          aria-label="Profile & settings"
+          title={username ?? "Profile"}
         >
-          S
-        </button>
+          {username?.slice(0, 1) ?? "·"}
+        </Link>
       </div>
       <div className="px-4 pb-3 md:hidden">
         <SearchBox onNavigate={onMenu} />

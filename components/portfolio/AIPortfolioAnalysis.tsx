@@ -1,9 +1,95 @@
+"use client";
+
+/**
+ * Artha Intelligence on the Portfolio page — same builder as the dashboard:
+ * computed only from the user's actual holdings, with honest states for
+ * "no portfolio" and "prices unavailable".
+ */
+
+import Link from "next/link";
 import { Sparkles } from "lucide-react";
-import { portfolioInsight } from "@/lib/mock/ai";
+import { portfolioService, PortfolioNotSetupError } from "@/lib/services/portfolioService";
+import { buildPortfolioInsight } from "@/lib/insights";
+import { useAuthStore } from "@/lib/store/useAuthStore";
+import { useAsync } from "@/lib/hooks/useAsync";
 import { StatusPill } from "@/components/ui/Badge";
+import { ErrorState, SkeletonRows } from "@/components/ui/States";
+
+type Data =
+  | { kind: "no-portfolio" }
+  | { kind: "unpriced" }
+  | { kind: "insight"; insight: NonNullable<ReturnType<typeof buildPortfolioInsight>> };
+
+async function load(): Promise<Data> {
+  try {
+    const [summary, holdings, sectors] = await Promise.all([
+      portfolioService.getSummary(),
+      portfolioService.getHoldings(),
+      portfolioService.getSectorAllocation(),
+    ]);
+    const riskProfile = useAuthStore.getState().user?.risk_profile ?? null;
+    const insight = buildPortfolioInsight({ summary, holdings, sectors, riskProfile });
+    return insight ? { kind: "insight", insight } : { kind: "unpriced" };
+  } catch (e) {
+    if (e instanceof PortfolioNotSetupError) return { kind: "no-portfolio" };
+    throw e;
+  }
+}
 
 export function AIPortfolioAnalysis() {
-  const { tag, title, insight, why, action, caveat } = portfolioInsight;
+  const { data, loading, error, reload } = useAsync(load, []);
+
+  if (error) {
+    return (
+      <div className="rounded-2xl border border-gold/25 bg-gradient-to-b from-goldsoft/60 to-surface p-5">
+        <ErrorState onRetry={reload} />
+      </div>
+    );
+  }
+  if (loading || !data) {
+    return (
+      <div className="rounded-2xl border border-gold/25 bg-gradient-to-b from-goldsoft/60 to-surface p-5">
+        <SkeletonRows rows={5} />
+      </div>
+    );
+  }
+
+  if (data.kind === "no-portfolio") {
+    return (
+      <div className="rounded-2xl border border-gold/25 bg-gradient-to-b from-goldsoft/60 to-surface p-5">
+        <span className="section-label flex items-center gap-1.5 !text-gold">
+          <Sparkles size={12} />
+          Artha Intelligence
+        </span>
+        <p className="mt-3 text-sm leading-relaxed text-secondary">
+          Add holdings to receive portfolio insights — nothing personalised is shown before your data exists.
+        </p>
+        <Link href="/portfolio?setup=virtual" className="btn-primary mt-4 !py-2 text-xs">
+          Set up portfolio
+        </Link>
+      </div>
+    );
+  }
+
+  if (data.kind === "unpriced") {
+    return (
+      <div className="rounded-2xl border border-gold/25 bg-gradient-to-b from-goldsoft/60 to-surface p-5">
+        <span className="section-label flex items-center gap-1.5 !text-gold">
+          <Sparkles size={12} />
+          Artha Intelligence
+        </span>
+        <p className="mt-3 text-sm leading-relaxed text-secondary">
+          Your holdings exist but could not be priced right now, so no insight is shown rather than a guessed one.
+        </p>
+        <button onClick={reload} className="btn-ghost mt-4 !py-1.5 text-xs">
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  const { tag, title, insight, why, action, caveat } = data.insight;
+
   return (
     <div className="relative overflow-hidden rounded-2xl border border-gold/25 bg-gradient-to-b from-goldsoft/60 to-surface p-5">
       <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-gold/10 blur-3xl" />
@@ -19,12 +105,12 @@ export function AIPortfolioAnalysis() {
         <p className="mt-2 text-[13.5px] leading-relaxed text-secondary">{insight}</p>
         <div className="mt-4 space-y-3">
           <div className="rounded-xl border border-edge bg-surface/80 p-3.5">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-info">{why.split(":")[0]}</p>
-            <p className="mt-1.5 text-[12.5px] leading-relaxed text-secondary">{why.split(":").slice(1).join(":")}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-info">Why this matters</p>
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-secondary">{why}</p>
           </div>
           <div className="rounded-xl border border-edge bg-surface/80 p-3.5">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-gold">{action.split(":")[0]}</p>
-            <p className="mt-1.5 text-[12.5px] leading-relaxed text-secondary">{action.split(":").slice(1).join(":")}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-gold">Suggested check</p>
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-secondary">{action}</p>
           </div>
         </div>
         <p className="mt-4 border-t border-edge/70 pt-3 text-[10.5px] leading-relaxed text-muted">{caveat}</p>

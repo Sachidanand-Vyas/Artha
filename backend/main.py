@@ -23,7 +23,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from db import init_db
 from models.schemas import AdvisorAskIn, CalcIn, CalcResult, Candle, HoldingIn, StockAnalysis
+from routes_account import router as account_router
 from services import llm
 from services import market_data as md
 from services.calculations import calculate
@@ -54,7 +56,17 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
+    # Chrome sends a Private Network Access preflight (Access-Control-
+    # Request-Private-Network) even for localhost -> localhost; Starlette >=1.6
+    # rejects it with 400 unless explicitly allowed. Origins stay restricted
+    # to FRONTEND_ORIGINS, so this only unlocks local dev.
+    allow_private_network=True,
 )
+
+# Accounts, onboarding preferences and the virtual (paper-trading) portfolio.
+# User data lives in the local SQLite file — see db.py / routes_account.py.
+app.include_router(account_router)
+init_db()
 
 
 # ---------------------------------------------------------------------------

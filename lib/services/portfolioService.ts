@@ -1,45 +1,39 @@
 /**
- * PORTFOLIO SERVICE — valuation of the user's holdings.
+ * PORTFOLIO SERVICE — the logged-in user's actual portfolio.
  *
- * Quantities and average costs are user inputs (demo portfolio, stored here).
- * Every price, day change, P&L and allocation percentage is computed by the
- * FastAPI backend from the same market-data layer the rest of Artha uses —
- * one source of truth for prices.
+ * Everything here comes from the FastAPI backend (SQLite + the existing
+ * market-data layer):
+ *   - quantities / average costs: entered by the user (virtual trades or a
+ *     manual import of their real-world holdings),
+ *   - prices, day changes, P&L, allocations: computed on the backend from the
+ *     same market-data layer the rest of Artha uses — one source of truth.
  *
- * Transactions, goals and cash are still clearly-labelled demo/user data.
- *
- * Interface unchanged: components keep calling `portfolioService.*`.
+ * There is no seeded demo portfolio and no illustrative history: a user with
+ * no portfolio gets `PortfolioNotSetupError`, which the UI turns into a setup
+ * prompt instead of numbers.
  */
 
 import type {
   AllocationSlice,
   Goal,
   Holding,
+  HistoryPoint,
   PortfolioSummary,
   SectorSlice,
   Transaction,
 } from "@/lib/types";
-import { apiPost } from "@/lib/services/api";
-import { randomWalk } from "@/lib/utils";
-import {
-  analytics,
-  cashBalance,
-  goals,
-  transactions,
-} from "@/lib/mock/portfolio";
+import { apiGet, apiSend, ApiError } from "@/lib/services/api";
 
-/* Demo portfolio: quantity + average cost are user inputs, NOT market data. */
-const SEED_HOLDINGS: { symbol: string; qty: number; avgCost: number }[] = [
-  { symbol: "RELIANCE", qty: 40, avgCost: 2380 },
-  { symbol: "TCS", qty: 25, avgCost: 3180 },
-  { symbol: "HDFCBANK", qty: 60, avgCost: 1442 },
-  { symbol: "INFY", qty: 80, avgCost: 1352 },
-  { symbol: "ICICIBANK", qty: 100, avgCost: 982 },
-  { symbol: "SBIN", qty: 120, avgCost: 698 },
-  { symbol: "LT", qty: 15, avgCost: 2965 },
-  { symbol: "NVDA", qty: 12, avgCost: 84.5 },
-  { symbol: "MSFT", qty: 6, avgCost: 331 },
-];
+/** Thrown when the user has not created a portfolio yet (empty state, not an error). */
+export class PortfolioNotSetupError extends Error {
+  constructor() {
+    super("Your portfolio isn't set up yet.");
+    this.name = "PortfolioNotSetupError";
+  }
+}
+
+export type PortfolioMode = "virtual" | "manual";
+export type OrderSide = "BUY" | "SELL";
 
 /* --------------------------- Backend wire types --------------------------- */
 
@@ -61,7 +55,12 @@ interface ApiHolding {
   available: boolean;
 }
 
-interface ApiValuation {
+interface ApiPortfolio {
+  exists: boolean;
+  mode: PortfolioMode | null;
+  virtual_cash: number;
+  initial_capital: number;
+  created_at: string | null;
   holdings: ApiHolding[];
   totals: {
     invested: number;
@@ -74,15 +73,36 @@ interface ApiValuation {
   source: string;
 }
 
-const VALUATION_TTL = 60_000;
+interface ApiTransaction {
+  id: number;
+  symbol: string;
+  type: "BUY" | "SELL";
+  qty: number;
+  price: number;
+  amount: number;
+  source: string; // 'trade' | 'import'
+  timestamp: string; // ISO
+}
 
-/** One valuation per TTL — summary, holdings, allocation and sectors share it. */
-const valuation = () =>
-  apiPost<ApiValuation>(
-    "/api/portfolio/holdings",
-    SEED_HOLDINGS.map((h) => ({ symbol: h.symbol, qty: h.qty, avg_cost: h.avgCost })),
-    VALUATION_TTL,
-  );
+export interface PortfolioState {
+  exists: boolean;
+  mode: PortfolioMode | null;
+  cash: number;
+  initialCapital: number;
+  createdAt: string | null;
+}
+
+const PORTFOLIO_TTL = 30_000;
+const TRANSACTIONS_TTL = 15_000;
+
+/** One cached GET per TTL — summary, holdings and allocation share it. */
+const fetchPortfolio = () => apiGet<ApiPortfolio>("/api/portfolio", PORTFOLIO_TTL);
+
+async function requirePortfolio(): Promise<ApiPortfolio> {
+  const p = await fetchPortfolio();
+  if (!p.exists) throw new PortfolioNotSetupError();
+  return p;
+}
 
 /* -------------------------------- Mapping -------------------------------- */
 
@@ -90,6 +110,7 @@ function mapHolding(h: ApiHolding): Holding {
   return {
     symbol: h.symbol,
     name: h.name,
+    sector: h.sector,
     qty: h.qty,
     avgCost: h.avg_cost,
     ltp: h.available ? h.ltp : null,
@@ -103,69 +124,82 @@ function mapHolding(h: ApiHolding): Holding {
   };
 }
 
-/* ------------------------- Illustrative history --------------------------- */
-/* The backend values TODAY's holdings; it has no past portfolio value, so the
-   chart shape below is a seeded random walk scaled to the real current value
-   and is labelled as illustrative in the UI. */
+function mapSummary(p: ApiPortfolio): PortfolioSummary {
+  const t = p.totals;
+  const equity = t.value;
+  const cash = p.virtual_cash;
+  const prevEquity = equity - t.day_change;
+  const todayChangePct = prevEquity > 0 ? (t.day_change / prevEquity) * 100 : 0;
 
-const HISTORY_POINTS = 24;
-const MONTH_MS = 30 * 24 * 3600 * 1000;
-
-function illustrativeHistory(totalValue: number): PortfolioSummary["valueHistory"] {
-  const shape = randomWalk(41, HISTORY_POINTS, 1, 0.012, 0.03);
-  const benchShape = randomWalk(42, HISTORY_POINTS, 1, 0.01, 0.035);
-  const last = shape[shape.length - 1] || 1;
-  const benchLast = benchShape[benchShape.length - 1] || 1;
-  const now = Date.now();
-  return shape.map((v, i) => ({
-    time: now - (HISTORY_POINTS - i) * MONTH_MS,
-    value: (v / last) * totalValue,
-    benchmark: (benchShape[i] / benchLast) * totalValue,
-  }));
+  return {
+    totalValue: equity + cash,
+    // Cost basis of the currently-held, priceable shares (qty x avg buy price).
+    invested: t.invested,
+    availableCash: cash,
+    todayChange: t.day_change,
+    todayChangePct,
+    overallReturn: t.unrealized_pnl,
+    overallReturnPct: t.return_percent,
+    allPriced: p.holdings.every((h) => h.available),
+  };
 }
 
 /* -------------------------------- Service -------------------------------- */
 
 export interface PortfolioService {
+  /** Cheap state probe (exists / mode / cash) — does not value holdings. */
+  getState(): Promise<PortfolioState>;
   getSummary(): Promise<PortfolioSummary>;
   getHoldings(): Promise<Holding[]>;
   getAllocation(): Promise<AllocationSlice[]>;
   getSectorAllocation(): Promise<SectorSlice[]>;
   getTransactions(): Promise<Transaction[]>;
+  /** No goals feature yet — always empty, never sample data. */
   getGoals(): Promise<Goal[]>;
   getCash(): Promise<number>;
+  /**
+   * Real cost-basis curve built ONLY from the user's own transactions
+   * (cumulative buy − sell amounts over time). Null when there is nothing
+   * meaningful to plot yet — historical market values are not stored.
+   */
+  getCostBasisHistory(): Promise<HistoryPoint[] | null>;
+  /** Create the portfolio: ₹1,00,000 virtual cash ('virtual') or cash 0 ('manual'). */
+  start(mode: PortfolioMode): Promise<PortfolioState>;
+  /** Virtual market order at the latest available real price. */
+  order(symbol: string, side: OrderSide, qty: number): Promise<PortfolioState>;
+  /** Manual import of an existing holding (no cash movement). */
+  addPosition(symbol: string, qty: number, avgCost: number): Promise<PortfolioState>;
 }
 
-export const portfolioService: PortfolioService = {
-  async getSummary() {
-    const v = await valuation();
-    const t = v.totals;
-    const equityPlusCash = t.value + cashBalance;
-    // Day % = day change against the previous close (value - day change).
-    const prevValue = t.value - t.day_change;
-    const todayChangePct = prevValue > 0 ? (t.day_change / prevValue) * 100 : 0;
+const state = (p: ApiPortfolio): PortfolioState => ({
+  exists: p.exists,
+  mode: p.mode,
+  cash: p.virtual_cash,
+  initialCapital: p.initial_capital,
+  createdAt: p.created_at,
+});
 
-    return {
-      totalValue: equityPlusCash,
-      invested: t.invested,
-      availableCash: cashBalance,
-      todayChange: t.day_change,
-      todayChangePct,
-      overallReturn: t.unrealized_pnl,
-      overallReturnPct: t.return_percent,
-      dayHistory: randomWalk(43, 30, equityPlusCash * 0.995, 0.0002, 0.0022),
-      valueHistory: illustrativeHistory(equityPlusCash),
-    };
+const mutated = ["/api/portfolio"];
+
+export const portfolioService: PortfolioService = {
+  async getState() {
+    const p = await fetchPortfolio();
+    return state(p);
+  },
+
+  async getSummary() {
+    return mapSummary(await requirePortfolio());
   },
 
   async getHoldings() {
-    const v = await valuation();
-    return v.holdings.map(mapHolding);
+    const p = await fetchPortfolio();
+    if (!p.exists) throw new PortfolioNotSetupError();
+    return p.holdings.map(mapHolding);
   },
 
   async getAllocation() {
-    const v = await valuation();
-    const priced = v.holdings.filter((h) => h.available);
+    const p = await requirePortfolio();
+    const priced = p.holdings.filter((h) => h.available && h.value != null);
     const byCountry = (country: "IN" | "US") =>
       priced
         .filter((h) => h.country === country)
@@ -174,20 +208,21 @@ export const portfolioService: PortfolioService = {
     const india = byCountry("IN");
     const us = byCountry("US");
     const equity = india + us;
-    const total = equity + cashBalance;
+    const cash = p.virtual_cash;
+    const total = equity + cash;
     if (total <= 0) return [];
 
     const slices: AllocationSlice[] = [
       { label: "Equity — India", value: india, pct: Math.round((india / total) * 100) },
       { label: "Equity — US", value: us, pct: Math.round((us / total) * 100) },
-      { label: "Cash", value: cashBalance, pct: Math.round((cashBalance / total) * 100) },
+      { label: "Cash", value: cash, pct: Math.round((cash / total) * 100) },
     ];
     return slices.filter((s) => s.value > 0);
   },
 
   async getSectorAllocation() {
-    const v = await valuation();
-    const valued = v.holdings.filter((h) => h.available && h.value);
+    const p = await requirePortfolio();
+    const valued = p.holdings.filter((h) => h.available && h.value);
     const equity = valued.reduce((sum, h) => sum + (h.value ?? 0), 0);
     if (equity <= 0) return [];
 
@@ -205,19 +240,90 @@ export const portfolioService: PortfolioService = {
   },
 
   async getTransactions() {
-    await Promise.resolve();
-    return transactions;
+    let rows: ApiTransaction[];
+    try {
+      rows = await apiGet<ApiTransaction[]>("/api/portfolio/transactions", TRANSACTIONS_TTL);
+    } catch (e) {
+      if (e instanceof ApiError && (e as ApiError).status === 400) return []; // no portfolio yet
+      throw e;
+    }
+    // Company names come from the tracked universe (same source as Research).
+    const universe = await import("@/lib/services/stockService")
+      .then((m) => m.stockService.getStocks())
+      .catch(() => []);
+    const nameOf = (symbol: string) => universe.find((s) => s.symbol === symbol)?.name ?? "";
+
+    return rows.map((t) => ({
+      id: String(t.id),
+      date: t.timestamp.slice(0, 10),
+      symbol: t.symbol,
+      name: nameOf(t.symbol),
+      type: t.type,
+      qty: t.qty,
+      price: t.price,
+      amount: t.amount,
+    }));
   },
 
-  async getGoals() {
-    await Promise.resolve();
-    return goals;
+  async getGoals(): Promise<Goal[]> {
+    // No goals feature yet — an empty list, never fabricated goals.
+    return [];
   },
 
   async getCash() {
-    await Promise.resolve();
-    return cashBalance;
+    const p = await fetchPortfolio();
+    return p.exists ? p.virtual_cash : 0;
+  },
+
+  async getCostBasisHistory() {
+    let rows: ApiTransaction[];
+    try {
+      rows = await apiGet<ApiTransaction[]>("/api/portfolio/transactions", TRANSACTIONS_TTL);
+    } catch {
+      return null;
+    }
+    if (rows.length < 2) return null; // one point makes no line
+    const ascending = [...rows].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    let deployed = 0;
+    const points: HistoryPoint[] = [];
+    for (const t of ascending) {
+      deployed += t.type === "BUY" ? t.amount : -t.amount;
+      points.push({
+        time: Date.parse(t.timestamp),
+        value: Math.max(0, Math.round(deployed)),
+      });
+    }
+    // Extend the line to now so same-day trades still render as a curve.
+    const last = points[points.length - 1];
+    const now = Date.now();
+    if (last && now > last.time) points.push({ time: now, value: last.value });
+    return points;
+  },
+
+  async start(mode) {
+    const p = await apiSend<ApiPortfolio>(
+      "/api/portfolio/start",
+      { mode },
+      mutated,
+    );
+    return state(p);
+  },
+
+  async order(symbol, side, qty) {
+    const p = await apiSend<ApiPortfolio>(
+      "/api/portfolio/order",
+      { symbol, side, qty },
+      mutated,
+    );
+    return state(p);
+  },
+
+  async addPosition(symbol, qty, avgCost) {
+    const p = await apiSend<ApiPortfolio>(
+      "/api/portfolio/position",
+      { symbol, qty, avg_cost: avgCost },
+      mutated,
+    );
+    return state(p);
   },
 };
-
-export { analytics as portfolioAnalytics };

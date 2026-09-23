@@ -1,18 +1,35 @@
 "use client";
 
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { portfolioService } from "@/lib/services/portfolioService";
+import { portfolioService, PortfolioNotSetupError } from "@/lib/services/portfolioService";
 import { useAsync } from "@/lib/hooks/useAsync";
 import { inrCompact } from "@/lib/utils";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { InfoTooltip } from "@/components/ui/Tooltip";
-import { ErrorState, SkeletonRows } from "@/components/ui/States";
+import { EmptyState, ErrorState, SkeletonRows } from "@/components/ui/States";
 
 const COLORS = ["#d4a94f", "#5b8def", "#16c784", "#8b7cf6", "#3ec5c5"];
 
+/** A missing portfolio is an empty state, not an error. */
+const orEmpty = async <T,>(promise: Promise<T>, empty: T): Promise<T> => {
+  try {
+    return await promise;
+  } catch (e) {
+    if (e instanceof PortfolioNotSetupError) return empty;
+    throw e;
+  }
+};
+
 export function AssetAllocation() {
-  const { data: allocation, loading: loadingA, error: errA, reload: reloadA } = useAsync(() => portfolioService.getAllocation(), []);
-  const { data: sectors, loading: loadingS, error: errS, reload: reloadS } = useAsync(() => portfolioService.getSectorAllocation(), []);
+  const { data: allocation, loading: loadingA, error: errA, reload: reloadA } = useAsync(
+    () => orEmpty(portfolioService.getAllocation(), []),
+    [],
+  );
+  const { data: sectors, loading: loadingS, error: errS, reload: reloadS } = useAsync(
+    () => orEmpty(portfolioService.getSectorAllocation(), []),
+    [],
+  );
+  const notSetup = !loadingA && !errA && (allocation?.length ?? 0) === 0 && (sectors?.length ?? 0) === 0;
 
   return (
     <Card className="p-5">
@@ -33,6 +50,17 @@ export function AssetAllocation() {
       ) : loadingA || !allocation ? (
         <div className="mt-4">
           <SkeletonRows rows={4} />
+        </div>
+      ) : allocation.length === 0 ? (
+        <div className="mt-3">
+          <EmptyState
+            title={notSetup ? "Your portfolio isn't set up yet." : "Nothing valued yet"}
+            message={
+              notSetup
+                ? "Set up a virtual portfolio or add your holdings to see where your money sits."
+                : "No priced holdings or cash to allocate right now — market data may be unavailable."
+            }
+          />
         </div>
       ) : (
         <div className="mt-2 flex flex-col items-center gap-6 sm:flex-row">
@@ -96,6 +124,10 @@ export function AssetAllocation() {
           <div className="mt-3">
             <SkeletonRows rows={5} />
           </div>
+        ) : sectors.length === 0 ? (
+          <p className="mt-3 text-xs text-muted">
+            No priced equity yet — sector weights appear once your holdings can be valued.
+          </p>
         ) : (
           <div className="mt-3 space-y-2.5">
             {sectors.map((s) => (

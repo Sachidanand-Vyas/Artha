@@ -121,13 +121,21 @@ export interface PortfolioSummary {
   todayChangePct: number;
   overallReturn: number;
   overallReturnPct: number;
-  dayHistory: number[];
-  valueHistory: { time: number; value: number; benchmark: number }[];
+  /** False when at least one holding could not be priced right now. */
+  allPriced: boolean;
+}
+
+/** One point of the real cost-basis history derived from transactions. */
+export interface HistoryPoint {
+  time: number;
+  value: number;
 }
 
 export interface Holding {
   symbol: string;
   name: string;
+  /** Provider sector ("Other" when unavailable). */
+  sector: string;
   qty: number;
   avgCost: number;
   /** Latest available price — null when the quote could not be fetched. */

@@ -19,6 +19,19 @@ const RAW_BASE =
 /** Backend origin without a trailing slash, e.g. "http://localhost:8000". */
 export const API_BASE = RAW_BASE.replace(/\/+$/, "");
 
+/** Bearer token for the logged-in user — set by the auth store. */
+let authToken: string | null = null;
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setAuthToken(token: string | null): void {
+  authToken = token;
+}
+
+/** Registered once: called whenever the backend answers 401 (expired/invalid session). */
+export function onUnauthorized(fn: () => void): void {
+  unauthorizedHandler = fn;
+}
+
 export class ApiError extends Error {
   status?: number;
   constructor(message: string, status?: number) {
@@ -47,6 +60,11 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
   try {
     res = await fetch(`${API_BASE}${path}`, {
       ...init,
+      headers: {
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        ...(init?.headers ?? {}),
+      },
       signal:
         typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
           ? AbortSignal.timeout(REQUEST_TIMEOUT_MS)
@@ -67,12 +85,22 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
     } catch {
       /* non-JSON error body — fall through to the status message */
     }
+    if (res.status === 401 && !path.startsWith("/api/auth/login") && !path.startsWith("/api/auth/signup")) {
+      unauthorizedHandler?.();
+    }
     throw new ApiError(
       detail || `Backend request failed (HTTP ${res.status}) for ${path}`,
       res.status,
     );
   }
   return res.json();
+}
+
+/** Drop cached responses whose path starts with `prefix` (used after mutations). */
+export function invalidateCache(prefix: string): void {
+  for (const key of cache.keys()) {
+    if (key.includes(prefix)) cache.delete(key);
+  }
 }
 
 /** GET with a small TTL cache and in-flight dedupe. */
@@ -91,6 +119,30 @@ export function apiGet<T>(path: string, ttlMs = 60_000): Promise<T> {
     .finally(() => inflight.delete(path));
   inflight.set(path, p);
   return p;
+}
+
+/** Uncached GET — for responses that must always be current (e.g. /api/auth/me). */
+export function apiFetch<T>(path: string): Promise<T> {
+  return request(path) as Promise<T>;
+}
+
+/**
+ * POST that is NEVER cached — used for login, signup and portfolio mutations
+ * where a stale response would corrupt state. Invalidates the GET cache for
+ * `invalidateAfter` paths so the next read reflects the change.
+ */
+export async function apiSend<T>(
+  path: string,
+  body?: unknown,
+  invalidateAfter: string[] = [],
+): Promise<T> {
+  const value = await request(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  for (const prefix of invalidateAfter) invalidateCache(prefix);
+  return value as T;
 }
 
 /** POST with the same caching/dedupe semantics (keyed on the body). */

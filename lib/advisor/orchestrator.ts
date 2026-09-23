@@ -53,7 +53,7 @@ import {
 } from "@/lib/advisor/calc";
 import { stockService } from "@/lib/services/stockService";
 import { marketService } from "@/lib/services/marketService";
-import { portfolioService } from "@/lib/services/portfolioService";
+import { portfolioService, PortfolioNotSetupError } from "@/lib/services/portfolioService";
 import { quickStructuredAnswer } from "@/lib/mock/ai";
 import { currencyOf, formatShortDate, inr, pct, signed } from "@/lib/utils";
 
@@ -193,7 +193,12 @@ async function loadPortfolio(plan: AdvisorPlan): Promise<void> {
       portfolioService.getHoldings(),
     ]);
     plan.portfolio = { summary, sectors, holdings };
-  } catch {
+  } catch (e) {
+    if (e instanceof PortfolioNotSetupError) {
+      // No portfolio yet — a setup prompt, never invented numbers.
+      plan.direct = noPortfolioReply();
+      return;
+    }
     plan.dataError =
       "the portfolio service (FastAPI backend) is unreachable right now, so I can't quote your holdings — I won't estimate them";
   }
@@ -460,6 +465,18 @@ function noBackendReply(what: string): string {
   ].join("\n");
 }
 
+function noPortfolioReply(): string {
+  return [
+    "**You don't have a portfolio set up yet**, so there's nothing of yours to quote — and I won't make one up.",
+    "",
+    "Set one up in a few seconds:",
+    "• **Start with Virtual Money** — ₹1,00,000 of paper cash to trade at real market prices",
+    "• **Add Existing Holdings** — enter the shares you already own (quantity + average price)",
+    "",
+    "Both are on the Portfolio page. Once it exists, ask me things like *\"What's my portfolio worth?\"* or *\"Am I diversified?\"* and I'll answer from your real numbers.",
+  ].join("\n");
+}
+
 function renderConcept(entry: KnowledgeEntry, mode: AdvisorPlan["mode"]): string {
   if (mode === "why-concept" && entry.why) {
     return [`**Why it matters — ${entry.title}**`, "", entry.why, "", KNOWLEDGE_PIVOT].join("\n");
@@ -665,6 +682,17 @@ function renderPortfolio(plan: AdvisorPlan): string {
     `Cash ${inr(Math.round(summary.availableCash))} · ${holdings.length} positions (${valued.length} priced)`,
   ];
 
+  /* 0. Portfolio exists but nothing bought yet. */
+  if (holdings.length === 0) {
+    return [
+      `**Your portfolio is set up but empty.**`,
+      "",
+      `Available virtual cash: **${inr(Math.round(summary.availableCash))}** · no holdings yet.`,
+      "",
+      "Buy your first stock from the Trade panel on the Portfolio page (or the Research page of any stock), then ask me again — everything I quote comes from your actual holdings.",
+    ].join("\n");
+  }
+
   /* 1. "How much X do I hold?" */
   if (plan.holdingSymbol) {
     const h = holdings.find((x) => x.symbol === plan.holdingSymbol);
@@ -672,9 +700,9 @@ function renderPortfolio(plan: AdvisorPlan): string {
       return [
         ...head,
         "",
-        `You don't hold **${plan.holdingSymbol}** in your demo portfolio.`,
+        `You don't hold **${plan.holdingSymbol}** in your portfolio.`,
         "",
-        "_Holdings are user-entered; prices are latest available from the backend._",
+        "_Holdings are yours; prices are latest available from the backend._",
       ].join("\n");
     }
     return [
@@ -745,7 +773,7 @@ function renderPortfolio(plan: AdvisorPlan): string {
     "Why it matters: concentration decides where your returns come from — a single-sector shock hits a concentrated portfolio much harder, while diversification keeps market risk and removes company/sector-specific risk.",
     illustration,
     "",
-    "_Positions are user-entered demo holdings; all values are computed by the backend from real prices._",
+    "_Positions are yours; all values are computed by the backend from real, latest-available market prices._",
   ].join("\n");
 }
 
@@ -837,7 +865,7 @@ export function buildLlmContext(plan: AdvisorPlan): Record<string, unknown> | nu
           weightPct: h.weightPct,
           returnPct: h.returnPct,
         })),
-        note: "Positions are user-entered demo holdings; prices are latest available from the data provider.",
+        note: "The user's own holdings; prices are latest available from the data provider.",
       },
     };
   }

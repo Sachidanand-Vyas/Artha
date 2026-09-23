@@ -8,8 +8,7 @@ import { aiService } from "@/lib/services/aiService";
 import { suggestedPrompts } from "@/lib/advisor/knowledge";
 import { useAppStore, ensureSeedConversation } from "@/lib/store/useAppStore";
 import { useAsync } from "@/lib/hooks/useAsync";
-import { portfolioService } from "@/lib/services/portfolioService";
-import { analyticsService } from "@/lib/services/analyticsService";
+import { portfolioService, PortfolioNotSetupError } from "@/lib/services/portfolioService";
 import { cn, inr, timeAgo } from "@/lib/utils";
 import { StatusPill } from "@/components/ui/Badge";
 
@@ -87,39 +86,63 @@ function ChatMessage({ msg }: { msg: AdvisorMessage }) {
   );
 }
 
+/** What the Advisor can reference — the user's real portfolio, or an honest "not set up". */
 function ContextPanel() {
-  const { data: summary } = useAsync(() => portfolioService.getSummary(), []);
-  const { data: metrics } = useAsync(() => analyticsService.getMetrics(), []);
-  const { data: sectors } = useAsync(() => portfolioService.getSectorAllocation(), []);
+  const { data } = useAsync(async () => {
+    try {
+      const [summary, holdings, sectors] = await Promise.all([
+        portfolioService.getSummary(),
+        portfolioService.getHoldings(),
+        portfolioService.getSectorAllocation(),
+      ]);
+      return { hasPortfolio: true, summary, positions: holdings.length, sectors };
+    } catch (e) {
+      if (e instanceof PortfolioNotSetupError) {
+        return { hasPortfolio: false, summary: null, positions: 0, sectors: [] };
+      }
+      throw e;
+    }
+  }, []);
 
   return (
     <div className="hidden w-72 shrink-0 flex-col gap-4 xl:flex">
       <div className="card p-4">
         <p className="section-label">Context snapshot</p>
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          What Artha can reference while answering. Portfolio value comes from the backend at latest available
-          prices; the risk score is a demo metric.
+          What Artha can reference while answering — your actual portfolio at latest available prices.
         </p>
-        <div className="mt-3 space-y-2 text-[13px]">
-          <div className="flex justify-between">
-            <span className="text-muted">Portfolio</span>
-            <span className="font-semibold tnum text-ink">{summary ? inr(summary.totalValue) : "…"}</span>
+        {!data ? (
+          <p className="mt-3 text-[13px] text-muted">Loading…</p>
+        ) : !data.hasPortfolio ? (
+          <div className="mt-3">
+            <p className="text-[13px] font-semibold text-ink">Portfolio not set up yet</p>
+            <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
+              Portfolio questions will offer to set one up until you do. Concepts, stock data and calculations work
+              right away.
+            </p>
           </div>
-          <div className="flex justify-between">
-            <span className="text-muted">Cash</span>
-            <span className="font-semibold tnum text-ink">{summary ? inr(summary.availableCash) : "…"}</span>
+        ) : (
+          <div className="mt-3 space-y-2 text-[13px]">
+            <div className="flex justify-between">
+              <span className="text-muted">Portfolio</span>
+              <span className="font-semibold tnum text-ink">{inr(data.summary!.totalValue)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted">Cash</span>
+              <span className="font-semibold tnum text-ink">{inr(data.summary!.availableCash)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted">Positions</span>
+              <span className="font-semibold tnum text-ink">{data.positions}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted">Top sector</span>
+              <span className="font-semibold text-ink">
+                {data.sectors.length ? `${data.sectors[0].sector} (${data.sectors[0].pct.toFixed(0)}%)` : "N/A"}
+              </span>
+            </div>
           </div>
-          <div className="flex justify-between">
-            <span className="text-muted">Risk score</span>
-            <span className="font-semibold tnum text-ink">{metrics ? `${metrics.riskScore}/100` : "…"}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted">Top sector</span>
-            <span className="font-semibold text-ink">
-              {sectors?.length ? `${sectors[0].sector} (${sectors[0].pct.toFixed(0)}%)` : "N/A"}
-            </span>
-          </div>
-        </div>
+        )}
       </div>
 
       <div className="card p-4">

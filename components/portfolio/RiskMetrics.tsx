@@ -1,135 +1,129 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { AnalyticsMetrics } from "@/lib/types";
-import { analyticsService } from "@/lib/services/analyticsService";
+/**
+ * Portfolio analytics — every metric is derived from the user's actual
+ * holdings and the backend's real valuations. Metrics that would require
+ * fabricated inputs (Sharpe, VaR, alpha…) are NOT shown: they need historical
+ * portfolio valuations Artha does not store, so they would be guesses.
+ */
+
+import { useMemo } from "react";
+import type { Holding, PortfolioSummary } from "@/lib/types";
+import { cn, pct } from "@/lib/utils";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { InfoTooltip } from "@/components/ui/Tooltip";
-import { ErrorState, SkeletonRows } from "@/components/ui/States";
-import { cn } from "@/lib/utils";
 
 interface MetricDef {
-  key: keyof AnalyticsMetrics;
   label: string;
-  fmt: (m: AnalyticsMetrics) => string;
+  value: string | number | null; // null -> N/A
   explain: string;
-  good?: (m: AnalyticsMetrics) => boolean;
+  tone?: "pos" | "neg";
 }
 
-const METRICS: MetricDef[] = [
-  {
-    key: "sharpe",
-    label: "Sharpe Ratio",
-    fmt: (m) => m.sharpe.toFixed(2),
-    explain:
-      "Return earned per unit of risk taken. Above 1 is decent, above 2 is strong. It measures whether you are being paid fairly for the volatility you endure.",
-  },
-  {
-    key: "sortino",
-    label: "Sortino Ratio",
-    fmt: (m) => m.sortino.toFixed(2),
-    explain:
-      "Like Sharpe, but it only penalises downside volatility. A higher Sortino means losses (not just swings) are better controlled.",
-  },
-  {
-    key: "var95",
-    label: "VaR (95%, 1m)",
-    fmt: (m) => `${m.var95.toFixed(1)}%`,
-    explain:
-      "Value at Risk: in a typical month, losses are expected to stay within this percentage 95% of the time. The remaining 5% can be worse — it is a risk gauge, not a limit.",
-  },
-  {
-    key: "maxDrawdown",
-    label: "Max Drawdown",
-    fmt: (m) => `${m.maxDrawdown.toFixed(1)}%`,
-    explain:
-      "The largest peak-to-trough decline your portfolio has experienced. It shows how much paper loss you had to tolerate — the true test of staying invested.",
-  },
-  {
-    key: "volatility",
-    label: "Volatility",
-    fmt: (m) => `${m.volatility.toFixed(1)}%`,
-    explain:
-      "Annualised standard deviation of monthly returns — how much the portfolio typically swings in a year. Lower is smoother; higher is bumpier.",
-  },
-  {
-    key: "beta",
-    label: "Beta",
-    fmt: (m) => m.beta.toFixed(2),
-    explain:
-      "Sensitivity to the broad market. Beta of 1 means the portfolio moves with the market; above 1 amplifies moves, below 1 dampens them.",
-  },
-  {
-    key: "alpha",
-    label: "Alpha",
-    fmt: (m) => `${m.alpha > 0 ? "+" : ""}${m.alpha.toFixed(1)}%`,
-    explain:
-      "Return above what the market risk would predict. Positive alpha means the portfolio outperformed its beta-adjusted benchmark (on sample data).",
-    good: (m) => m.alpha >= 0,
-  },
-  {
-    key: "riskScore",
-    label: "Risk Score",
-    fmt: (m) => `${m.riskScore} / 100`,
-    explain:
-      "A composite of volatility, concentration, leverage and liquidity. It summarises the portfolio's overall risk profile — educational, not predictive.",
-  },
-];
+export function RiskMetrics({
+  holdings,
+  summary,
+}: {
+  holdings: Holding[];
+  summary: PortfolioSummary;
+}) {
+  const metrics = useMemo<MetricDef[]>(() => {
+    const valued = holdings.filter((h) => h.available && h.value != null);
+    const equity = valued.reduce((a, h) => a + (h.value ?? 0), 0);
 
-export function RiskMetrics() {
-  const [metrics, setMetrics] = useState<AnalyticsMetrics | null>(null);
-  const [error, setError] = useState(false);
+    const top = valued.length
+      ? [...valued].sort((a, b) => (b.weightPct ?? 0) - (a.weightPct ?? 0))[0]
+      : null;
 
-  useEffect(() => {
-    let alive = true;
-    analyticsService
-      .getMetrics()
-      .then((m) => {
-        if (alive) setMetrics(m);
-      })
-      .catch(() => {
-        if (alive) setError(true);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
+    const sectorBuckets = new Map<string, number>();
+    for (const h of valued) {
+      const key = h.sector || "Other";
+      sectorBuckets.set(key, (sectorBuckets.get(key) ?? 0) + (h.value ?? 0));
+    }
+    const topSector = [...sectorBuckets.entries()].sort((a, b) => b[1] - a[1])[0];
+    const topSectorPct = topSector && equity > 0 ? (topSector[1] / equity) * 100 : null;
+    const cashPct =
+      summary.totalValue > 0 ? (summary.availableCash / summary.totalValue) * 100 : null;
 
-  const retry = () => {
-    setMetrics(null);
-    setError(false);
-    analyticsService.getMetrics().then(setMetrics).catch(() => setError(true));
-  };
+    return [
+      {
+        label: "Overall return",
+        value: pct(summary.overallReturnPct, 1),
+        tone: summary.overallReturnPct >= 0 ? "pos" : "neg",
+        explain:
+          "Unrealised gain or loss of your current holdings versus their cost basis, in percentage terms.",
+      },
+      {
+        label: "Today's change",
+        value: pct(summary.todayChangePct, 2),
+        tone: summary.todayChangePct >= 0 ? "pos" : "neg",
+        explain:
+          "Change in your holdings' total value since the previous market close, using each stock's latest daily move.",
+      },
+      {
+        label: "Positions",
+        value: holdings.length,
+        explain:
+          "Number of distinct stocks you hold. More positions usually means less company-specific risk — beyond ~15–20 it adds little.",
+      },
+      {
+        label: "Sectors held",
+        value: valued.length ? sectorBuckets.size : null,
+        explain:
+          "Distinct sectors across your priced holdings. Sector spread removes single-industry shocks that diversification is meant to avoid.",
+      },
+      {
+        label: "Largest position",
+        value: top ? `${top.symbol} · ${top.weightPct.toFixed(1)}%` : null,
+        explain:
+          "Weight of your biggest single stock in priced equity. Above ~15–20% the portfolio behaves like a stock pick.",
+      },
+      {
+        label: "Largest sector",
+        value: topSectorPct != null && topSector ? `${topSector[0]} · ${topSectorPct.toFixed(1)}%` : null,
+        explain:
+          "Share of priced equity in your biggest sector — where a sector-wide fall would hit you hardest.",
+      },
+      {
+        label: "Cash share",
+        value: cashPct != null ? `${cashPct.toFixed(1)}%` : null,
+        explain:
+          "Uninvested virtual cash as a share of total portfolio value — dry powder, or money not yet at work.",
+      },
+      {
+        label: "Unpriced holdings",
+        value: holdings.length - valued.length,
+        explain:
+          "Holdings the data provider could not price right now. They are excluded from valuations and shown as N/A — never estimated.",
+      },
+    ];
+  }, [holdings, summary]);
 
   return (
     <Card className="p-5">
       <CardHeader
         title="Analytics & Risk"
-        subtitle="Each metric explains itself — what it measures and why it matters"
+        subtitle="Derived from your actual holdings — each metric explains what it measures"
       />
-      {error ? (
-        <div className="mt-4">
-          <ErrorState onRetry={retry} />
-        </div>
-      ) : !metrics ? (
-        <div className="mt-4">
-          <SkeletonRows rows={4} />
-        </div>
-      ) : (
-        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-          {METRICS.map((m) => {
-            const good = m.good?.(metrics);
-            return (
-              <div key={m.label} className="rounded-xl border border-edge bg-surface2/40 p-3.5">
-                <InfoTooltip label={<span className="text-[11px] font-medium">{m.label}</span>} text={m.explain} />
-                <p className={cn("mt-1.5 text-lg font-bold tnum", good === false ? "text-neg" : "text-ink")}>
-                  {m.fmt(metrics)}
-                </p>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        {metrics.map((m) => (
+          <div key={m.label} className="rounded-xl border border-edge bg-surface2/40 p-3.5">
+            <InfoTooltip label={<span className="text-[11px] font-medium">{m.label}</span>} text={m.explain} />
+            <p
+              className={cn(
+                "mt-1.5 text-lg font-bold tnum",
+                m.value === null ? "text-muted" : m.tone === "neg" ? "text-neg" : m.tone === "pos" ? "text-pos" : "text-ink",
+              )}
+            >
+              {m.value === null ? "N/A" : m.value}
+            </p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 border-t border-edge pt-3 text-[11px] leading-relaxed text-muted">
+        Sharpe, VaR, drawdown and similar backtest-style metrics need historical portfolio valuations, which Artha
+        does not store — so they are left out instead of estimated. Educational — not financial advice.
+      </p>
     </Card>
   );
 }

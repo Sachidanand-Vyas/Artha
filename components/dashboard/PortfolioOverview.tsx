@@ -1,22 +1,33 @@
 "use client";
 
+/**
+ * Dashboard portfolio overview — the logged-in user's REAL numbers.
+ *
+ * - No portfolio yet -> setup prompt (never fabricated values).
+ * - With a portfolio -> value / invested / today's change / cash, all computed
+ *   by the backend from live market prices.
+ * - The chart plots the cost-basis curve derived from the user's own
+ *   transactions. Artha does not store past portfolio valuations, so no
+ *   invented performance line is ever drawn.
+ */
+
+import Link from "next/link";
 import { useMemo } from "react";
 import {
   Area,
   AreaChart,
   CartesianGrid,
-  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { Wallet } from "lucide-react";
-import { portfolioService } from "@/lib/services/portfolioService";
+import { History, Wallet } from "lucide-react";
+import { portfolioService, PortfolioNotSetupError } from "@/lib/services/portfolioService";
 import { useAsync } from "@/lib/hooks/useAsync";
 import { cn, inr, inrCompact } from "@/lib/utils";
 import { Card, CardHeader } from "@/components/ui/Card";
-import { ErrorState, SkeletonRows } from "@/components/ui/States";
+import { EmptyState, ErrorState, SkeletonRows } from "@/components/ui/States";
 import { TrendBadge } from "@/components/ui/Badge";
 
 interface TipItem {
@@ -24,7 +35,6 @@ interface TipItem {
   value?: unknown;
   stroke?: string;
   color?: string;
-  dataKey?: string | number;
 }
 
 function ChartTooltip({
@@ -37,9 +47,13 @@ function ChartTooltip({
   label?: string | number;
 }) {
   if (!active || !payload?.length) return null;
+  const labelTime = typeof label === "number" ? label : Number(label);
+  const labelText = Number.isFinite(labelTime) && labelTime > 0
+    ? new Date(labelTime).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+    : String(label);
   return (
     <div className="rounded-xl border border-edgestrong bg-surface3 px-3 py-2 text-xs shadow-xl shadow-black/50">
-      <p className="mb-1 font-medium text-muted">{String(label)}</p>
+      <p className="mb-1 font-medium text-muted">{labelText}</p>
       {payload.map((p, i) => (
         <p key={i} className="flex items-center gap-2 tnum">
           <span className="h-2 w-2 rounded-full" style={{ background: p.stroke || p.color }} />
@@ -51,16 +65,62 @@ function ChartTooltip({
   );
 }
 
+type OverviewData =
+  | { kind: "no-portfolio" }
+  | {
+      kind: "ready";
+      summary: NonNullable<Awaited<ReturnType<typeof portfolioService.getSummary>>>;
+      history: Awaited<ReturnType<typeof portfolioService.getCostBasisHistory>>;
+    };
+
+async function loadOverview(): Promise<OverviewData> {
+  try {
+    const [summary, history] = await Promise.all([
+      portfolioService.getSummary(),
+      portfolioService.getCostBasisHistory(),
+    ]);
+    return { kind: "ready", summary, history };
+  } catch (e) {
+    if (e instanceof PortfolioNotSetupError) return { kind: "no-portfolio" };
+    throw e;
+  }
+}
+
+function SetupPrompt() {
+  return (
+    <Card className="p-5">
+      <CardHeader
+        title="Your portfolio isn't set up yet."
+        subtitle="Track your investments or practise with virtual money — real market prices, no real money."
+      />
+      <EmptyState
+        title="Start in one click"
+        message="Open a virtual portfolio with ₹1,00,000 of paper cash, or enter the holdings you already own. Both are valued at real, latest-available market prices."
+        action={
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <Link href="/portfolio?setup=virtual" className="btn-primary">
+              <Wallet size={15} /> Start Virtual Portfolio
+            </Link>
+            <Link href="/portfolio?setup=manual" className="btn-ghost">
+              Add Existing Holdings
+            </Link>
+          </div>
+        }
+      />
+    </Card>
+  );
+}
+
 export function PortfolioOverview() {
-  const { data, loading, error, reload } = useAsync(() => portfolioService.getSummary(), []);
+  const { data, loading, error, reload } = useAsync(loadOverview, []);
+
   const chartData = useMemo(() => {
-    if (!data) return [];
-    return data.valueHistory.map((p) => ({
-      label: new Date(p.time).toLocaleDateString("en-IN", { month: "short", year: "2-digit" }),
-      Portfolio: Math.round(p.value),
-      "Benchmark (NIFTY)": Math.round(p.benchmark),
-    }));
+    if (data?.kind !== "ready" || !data.history) return [];
+    return data.history.map((p) => ({ time: p.time, "Invested (cost basis)": p.value }));
   }, [data]);
+
+  const fmtTick = (t: number) =>
+    new Date(t).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit" });
 
   if (error) {
     return (
@@ -78,18 +138,21 @@ export function PortfolioOverview() {
     );
   }
 
+  if (data.kind === "no-portfolio") return <SetupPrompt />;
+
+  const d = data.summary;
   const stats = [
-    { label: "Total Portfolio Value", value: inr(data.totalValue), explain: "Current market value of your holdings at latest available prices, plus available cash." },
-    { label: "Invested Amount", value: inr(data.invested), explain: "Total cost basis of the shares you hold (quantity × average buy price)." },
-    { label: "Today's Change", value: `${data.todayChange >= 0 ? "+" : ""}${inr(Math.abs(data.todayChange))}`, tone: data.todayChange >= 0 ? "text-pos" : "text-neg", explain: "Change in your portfolio value since the previous market close." },
-    { label: "Available Cash", value: inr(data.availableCash), explain: "Uninvested cash ready to deploy or keep as a buffer." },
+    { label: "Total Portfolio Value", value: inr(d.totalValue), explain: "Current market value of your holdings at latest available prices, plus available cash." },
+    { label: "Invested Amount", value: inr(d.invested), explain: "Total cost basis of the shares you hold (quantity × average buy price)." },
+    { label: "Today's Change", value: `${d.todayChange >= 0 ? "+" : ""}${inr(Math.abs(d.todayChange))}`, tone: d.todayChange >= 0 ? "text-pos" : "text-neg", explain: "Change in your holdings' value since the previous market close (cash does not move)." },
+    { label: "Available Cash", value: inr(d.availableCash), explain: "Uninvested virtual cash ready to deploy or keep as a buffer." },
   ];
 
   return (
     <Card className="p-5">
       <CardHeader
         title="Portfolio Overview"
-        subtitle="Current value is real · 24-month shape vs a benchmark is illustrative"
+        subtitle="Your actual portfolio · valued at latest available market prices"
         right={
           <div className="flex items-center gap-4">
             <div className="text-right">
@@ -97,14 +160,14 @@ export function PortfolioOverview() {
               <p
                 className={cn(
                   "text-sm font-bold tnum",
-                  data.overallReturnPct >= 0 ? "text-pos" : "text-neg",
+                  d.overallReturnPct >= 0 ? "text-pos" : "text-neg",
                 )}
               >
-                {data.overallReturnPct >= 0 ? "+" : ""}
-                {data.overallReturnPct.toFixed(1)}%
+                {d.overallReturnPct >= 0 ? "+" : ""}
+                {d.overallReturnPct.toFixed(1)}%
               </p>
             </div>
-            <TrendBadge value={data.todayChange} pct={data.todayChangePct} />
+            <TrendBadge value={d.todayChange} pct={d.todayChangePct} />
           </div>
         }
       />
@@ -118,57 +181,61 @@ export function PortfolioOverview() {
         ))}
       </div>
 
-      <div className="mt-5 h-[240px] w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} margin={{ top: 6, right: 4, bottom: 0, left: 0 }}>
-            <defs>
-              <linearGradient id="pf-gold" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#d4a94f" stopOpacity={0.28} />
-                <stop offset="100%" stopColor="#d4a94f" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(150,168,196,0.07)" vertical={false} />
-            <XAxis
-              dataKey="label"
-              tick={{ fill: "var(--text-3)", fontSize: 11 }}
-              axisLine={false}
-              tickLine={false}
-              interval="preserveStartEnd"
-              minTickGap={40}
-            />
-            <YAxis
-              tickFormatter={(v: number) => inrCompact(v)}
-              tick={{ fill: "var(--text-3)", fontSize: 11 }}
-              axisLine={false}
-              tickLine={false}
-              width={70}
-            />
-            <Tooltip content={<ChartTooltip />} />
-            <Area
-              type="monotone"
-              dataKey="Portfolio"
-              stroke="#d4a94f"
-              strokeWidth={2}
-              fill="url(#pf-gold)"
-              name="Portfolio"
-            />
-            <Line
-              type="monotone"
-              dataKey="Benchmark (NIFTY)"
-              stroke="#5b8def"
-              strokeWidth={1.5}
-              strokeDasharray="5 4"
-              dot={false}
-              name="Benchmark (NIFTY)"
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+      {chartData.length >= 2 ? (
+        <div className="mt-5 h-[240px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={chartData} margin={{ top: 6, right: 4, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id="pf-gold" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#d4a94f" stopOpacity={0.28} />
+                  <stop offset="100%" stopColor="#d4a94f" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(150,168,196,0.07)" vertical={false} />
+              <XAxis
+                dataKey="time"
+                type="number"
+                domain={["dataMin", "dataMax"]}
+                tickFormatter={(v: number) => fmtTick(Number(v))}
+                tick={{ fill: "var(--text-3)", fontSize: 11 }}
+                axisLine={false}
+                tickLine={false}
+                tickCount={5}
+              />
+              <YAxis
+                tickFormatter={(v: number) => inrCompact(v)}
+                tick={{ fill: "var(--text-3)", fontSize: 11 }}
+                axisLine={false}
+                tickLine={false}
+                width={70}
+              />
+              <Tooltip content={<ChartTooltip />} />
+              <Area
+                type="monotone"
+                dataKey="Invested (cost basis)"
+                stroke="#d4a94f"
+                strokeWidth={2}
+                fill="url(#pf-gold)"
+                name="Invested (cost basis)"
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <div className="mt-5 flex items-start gap-3 rounded-xl border border-dashed border-edgestrong bg-surface2/30 px-4 py-3.5">
+          <History size={15} className="mt-0.5 shrink-0 text-muted" />
+          <p className="text-[12.5px] leading-relaxed text-muted">
+            Historical performance isn&apos;t available yet — Artha values your holdings live but does not store
+            past portfolio valuations, so no past performance line is drawn. The numbers above are real; this
+            chart appears once you have a few transactions.
+          </p>
+        </div>
+      )}
 
       <div className="mt-3 flex items-center gap-2 text-[11px] text-muted">
         <Wallet size={12} />
-        Holdings valued at latest available market prices via the FastAPI backend. The historical line is
-        illustrative — Artha does not store past portfolio values.
+        The line above is your invested cost basis, built only from your own transactions — not an estimate of
+        past market value. Prices may be delayed, not live.
       </div>
     </Card>
   );

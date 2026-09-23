@@ -18,6 +18,7 @@ import { StockPriceChart } from "@/components/research/StockPriceChart";
 import { FundamentalGrid } from "@/components/research/FundamentalGrid";
 import { TechnicalsPanel } from "@/components/research/TechnicalsPanel";
 import { AskArthaPanel } from "@/components/research/AskArthaPanel";
+import { TradeCard } from "@/components/research/TradeCard";
 
 const RANGES: TimeRange[] = ["1D", "1W", "1M", "6M", "1Y", "5Y"];
 
@@ -314,6 +315,8 @@ export default function ResearchPage() {
         {/* Right column */}
         <div className="space-y-6">
           <RecommendationCard prediction={stock.prediction} generatedAt={stock.prediction.generatedAt} />
+
+          <TradeCard key={`trade-${stock.symbol}`} symbol={stock.symbol} />
 
           <AskArthaPanel key={stock.symbol} stock={stock} />
 

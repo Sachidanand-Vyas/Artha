@@ -125,9 +125,9 @@ const TOOLS: ToolDef[] = [
     component: ({ onBack }) => (
       <ToolShell
         title="Portfolio Analyzer"
-        description="Real HHI math applied to your sample holdings — how concentrated your portfolio really is."
+        description="Real HHI math applied to your actual holdings — how concentrated your portfolio really is."
         onBack={onBack}
-        disclaimer="Analyzes your demo holdings valued at latest available market prices. Enter your own through portfolioService for your own numbers."
+        disclaimer="Analyzes your own holdings (virtual or imported) valued at latest available market prices. Set up a portfolio first if you haven't."
       >
         <PortfolioAnalyzer />
       </ToolShell>

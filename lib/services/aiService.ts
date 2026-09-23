@@ -1,5 +1,6 @@
 import type { AdvisorStructured, Stock, StockQa } from "@/lib/types";
-import { compareWithPeer, quickStructuredAnswer, stockQa } from "@/lib/mock/ai";
+import { compareWithPeer, quickStructuredAnswer, stockQa, type StockQaContext } from "@/lib/mock/ai";
+import { portfolioService, PortfolioNotSetupError } from "@/lib/services/portfolioService";
 import {
   buildLlmContext,
   planReply,
@@ -53,6 +54,17 @@ const cleanLlmText = (raw: string): string => {
 const loadStock = (symbol: string): Promise<Stock | undefined> =>
   stockService.getStock(symbol).catch(() => undefined);
 
+/** Real portfolio context for answers that reference what the user holds. */
+const loadPortfolioContext = async (): Promise<StockQaContext> => {
+  try {
+    const sectors = await portfolioService.getSectorAllocation();
+    return { hasPortfolio: true, sectors };
+  } catch (e) {
+    if (e instanceof PortfolioNotSetupError) return { hasPortfolio: false, sectors: [] };
+    return { hasPortfolio: false, sectors: [] }; // backend down: no claims either way
+  }
+};
+
 const noData = (symbol: string, question: string): StockQa => ({
   question,
   answer: `I could not load market data for **${symbol}**, so I would rather not guess. The recommendation and explanation for this stock are computed on the backend from its actual price history — if the data provider has no coverage, there is nothing to analyse yet.`,
@@ -86,9 +98,10 @@ export const aiService: AiService = {
   },
   async askAboutStock(symbol, question) {
     const stock = await loadStock(symbol);
+    const ctx = await loadPortfolioContext();
     await engineDelay();
     if (!stock) return noData(symbol, question);
-    return stockQa(stock, question);
+    return stockQa(stock, question, ctx);
   },
   async getStockAnalysis(symbol): Promise<AdvisorStructured> {
     const stock = await loadStock(symbol);

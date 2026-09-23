@@ -7,6 +7,7 @@ import { Bot, GraduationCap, LayoutDashboard, LineChart, PieChart, X } from "luc
 import { cn } from "@/lib/utils";
 import { Sidebar, SidebarContent } from "@/components/layout/Sidebar";
 import { Topbar } from "@/components/layout/Topbar";
+import { useAuthGuard } from "@/components/layout/AuthGate";
 
 const BOTTOM_NAV = [
   { href: "/", label: "Home", icon: LayoutDashboard },
@@ -16,9 +17,35 @@ const BOTTOM_NAV = [
   { href: "/learn", label: "Learn", icon: GraduationCap },
 ];
 
+/** Auth pages render standalone (no sidebar/topbar) — same dark/gold theme. */
+const STANDALONE_ROUTES = ["/login", "/signup"];
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const pathname = usePathname();
+  const { ready, token } = useAuthGuard();
+  const standalone = STANDALONE_ROUTES.includes(pathname);
+
+  // Auth pages: render as-is while the session resolves.
+  if (standalone) {
+    return <div className="min-h-screen">{children}</div>;
+  }
+
+  // Protected route: wait for hydration/validation before showing anything,
+  // so a logged-out visitor never sees the app (and a logged-in one never
+  // flashes the login page).
+  if (!ready || !token) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <span className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-gold/30 bg-goldsoft">
+            <span className="h-3 w-3 animate-pulse rounded-full bg-gold" />
+          </span>
+          <p className="text-xs text-muted">Loading Artha…</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">
