@@ -94,7 +94,7 @@ export function ensureSeedConversation() {
     useAppStore.getState().addMessage(id, {
       id: newId("msg"),
       role: "assistant",
-      text: "Welcome to Artha Advisor. I'm running on a rule-based sample engine for this demo — I can explain concepts, walk through sample data, and help you think through decisions. Ask me about a stock, a SIP, diversification, taxes, or retirement.",
+      text: "Welcome to Artha. I can explain financial concepts (P/E, SIPs, compounding…), pull your real portfolio and stock data from the backend, run exact calculations, and walk you through why a signal looks the way it does. Ask me anything finance.",
       ts: Date.now(),
     });
   }

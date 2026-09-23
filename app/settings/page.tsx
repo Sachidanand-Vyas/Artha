@@ -10,21 +10,21 @@ import { StatusPill } from "@/components/ui/Badge";
 const DATA_SOURCES = [
   {
     name: "Market Data Provider",
-    key: "marketService",
-    status: "mock" as const,
-    note: "Indices, quotes, candles — sample generator active.",
+    key: "stockService → FastAPI",
+    status: "live" as const,
+    note: "Yahoo Finance via the FastAPI backend — quotes, OHLCV, indicators, fundamentals (latest available, may be delayed).",
   },
   {
     name: "AI Assistant (LLM)",
     key: "aiService",
     status: "mock" as const,
-    note: "Rule-based demo engine. Interface ready for an LLM/RAG backend.",
+    note: "Finance assistant: knowledge base + real backend data + exact calculations. Optional LLM via env config.",
   },
   {
     name: "News & Sentiment",
     key: "newsService",
     status: "mock" as const,
-    note: "Mock articles with sentiment labels and AI summaries.",
+    note: "Mock articles with sentiment labels and AI summaries — clearly labelled demo content.",
   },
   {
     name: "Analytics Engine",
@@ -36,7 +36,7 @@ const DATA_SOURCES = [
     name: "User Account & Data",
     key: "auth / database",
     status: "planned" as const,
-    note: "No backend yet — watchlist & chats persist in localStorage.",
+    note: "No accounts yet — watchlist & chats persist in localStorage.",
   },
 ];
 
@@ -145,10 +145,10 @@ export default function SettingsPage() {
       <Card className="p-5">
         <CardHeader
           title="Data Sources & API Readiness"
-          subtitle="Artha is built API-first. This page shows exactly what is mocked and what a real integration would replace."
+          subtitle="Artha is built API-first. This page shows exactly what is real data and what is still mocked."
           right={
             <span className="flex items-center gap-1.5 text-[11px] text-pos">
-              <Database size={12} /> 4 demo · 1 planned
+              <Database size={12} /> 1 live · 3 demo · 1 planned
             </span>
           }
         />
@@ -158,12 +158,14 @@ export default function SettingsPage() {
               <div
                 className={cn(
                   "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border",
-                  d.status === "mock"
-                    ? "border-gold/25 bg-goldsoft text-gold"
-                    : "border-edge bg-surface2 text-muted",
+                  d.status === "live"
+                    ? "border-pos/30 bg-possoft text-pos"
+                    : d.status === "mock"
+                      ? "border-gold/25 bg-goldsoft text-gold"
+                      : "border-edge bg-surface2 text-muted",
                 )}
               >
-                {d.status === "mock" ? <Check size={14} /> : <ChevronRight size={14} />}
+                {d.status === "planned" ? <ChevronRight size={14} /> : <Check size={14} />}
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-[13px] font-semibold text-ink">{d.name}</p>
@@ -171,8 +173,8 @@ export default function SettingsPage() {
               </div>
               <div className="text-right">
                 <p className="font-mono text-[10.5px] text-secondary">{d.key}</p>
-                <StatusPill tone={d.status === "mock" ? "gold" : "info"}>
-                  {d.status === "mock" ? "Demo" : "Planned"}
+                <StatusPill tone={d.status === "live" ? "pos" : d.status === "mock" ? "gold" : "info"}>
+                  {d.status === "live" ? "Live" : d.status === "mock" ? "Demo" : "Planned"}
                 </StatusPill>
               </div>
             </div>
@@ -194,11 +196,13 @@ export default function SettingsPage() {
           </p>
           <p className="flex items-start gap-2 text-muted">
             <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-gold/60" />
-            All figures on this demo are sample data, clearly labelled as such.
+            Prices, technicals and fundamentals come from real market data (Yahoo Finance, latest available, may be
+            delayed). Demo sections — news, transactions, goals, learning — are labelled as such.
           </p>
           <p className="flex items-start gap-2 text-muted">
             <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-gold/60" />
-            AI surfaces use rule-based demo responses until a real LLM backend is connected through aiService.
+            AI explanations come from real backend data or the knowledge base, every missing metric shows N/A — Artha
+            never invents numbers or claims model accuracy.
           </p>
           <p className="flex items-start gap-2 text-muted">
             <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-gold/60" />

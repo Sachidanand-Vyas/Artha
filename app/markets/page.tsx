@@ -27,8 +27,8 @@ export default function MarketsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Markets"
-        subtitle="Indices, breadth and sector moves — illustrative sample data. Connect a market-data provider through marketService for live feeds."
-        right={<StatusPill tone="info">Sample data</StatusPill>}
+        subtitle="Indices, breadth and sector moves — latest available data from the market-data provider (may be delayed, not live)."
+        right={<StatusPill tone="info">Latest available</StatusPill>}
       />
 
       {/* Indices */}
@@ -82,30 +82,41 @@ export default function MarketsPage() {
             <div className="mt-4">
               <SkeletonRows rows={3} />
             </div>
+          ) : !breadth!.available || breadth!.advances == null || breadth!.declines == null ? (
+            /* Provider cannot supply advance/decline counts -> show N/A, never invented numbers. */
+            <div className="mt-4 rounded-xl border border-edge bg-surface2/40 px-4 py-8 text-center">
+              <p className="text-lg font-bold text-muted tnum">N/A</p>
+              <p className="mx-auto mt-1.5 max-w-[240px] text-[12px] leading-relaxed text-muted">
+                {breadth!.note ||
+                  "Advance/decline breadth is not available from the current market-data provider."}
+              </p>
+            </div>
           ) : (
             <div className="mt-4">
               <div className="flex h-3 w-full overflow-hidden rounded-full">
-                <div className="bg-pos" style={{ width: `${(breadth!.advances / (breadth!.advances + breadth!.declines)) * 100}%` }} />
-                <div className="bg-neg" style={{ width: `${(breadth!.declines / (breadth!.advances + breadth!.declines)) * 100}%` }} />
+                <div className="bg-pos" style={{ width: `${(breadth!.advances! / (breadth!.advances! + breadth!.declines!)) * 100}%` }} />
+                <div className="bg-neg" style={{ width: `${(breadth!.declines! / (breadth!.advances! + breadth!.declines!)) * 100}%` }} />
               </div>
               <div className="mt-4 space-y-2.5 text-sm">
                 <div className="flex items-center justify-between">
                   <span className="flex items-center gap-2 text-secondary">
                     <span className="h-2 w-2 rounded-full bg-pos" /> Advances
                   </span>
-                  <span className="font-semibold tnum text-pos">{breadth!.advances.toLocaleString("en-IN")}</span>
+                  <span className="font-semibold tnum text-pos">{breadth!.advances!.toLocaleString("en-IN")}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="flex items-center gap-2 text-secondary">
                     <span className="h-2 w-2 rounded-full bg-neg" /> Declines
                   </span>
-                  <span className="font-semibold tnum text-neg">{breadth!.declines.toLocaleString("en-IN")}</span>
+                  <span className="font-semibold tnum text-neg">{breadth!.declines!.toLocaleString("en-IN")}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="flex items-center gap-2 text-muted">
                     <span className="h-2 w-2 rounded-full bg-muted" /> Unchanged
                   </span>
-                  <span className="font-semibold tnum text-secondary">{breadth!.unchanged.toLocaleString("en-IN")}</span>
+                  <span className="font-semibold tnum text-secondary">
+                    {breadth!.unchanged != null ? breadth!.unchanged.toLocaleString("en-IN") : "N/A"}
+                  </span>
                 </div>
               </div>
             </div>
@@ -114,7 +125,7 @@ export default function MarketsPage() {
 
         {/* Sector performance */}
         <Card className="p-5 lg:col-span-2">
-          <CardHeader title="Sector Performance" subtitle="Illustrative daily moves" />
+          <CardHeader title="Sector Performance" subtitle="Average daily move of tracked large caps, grouped by sector" />
           {errSectors ? (
             <div className="mt-4">
               <ErrorState onRetry={reloadSectors} />
@@ -155,7 +166,7 @@ export default function MarketsPage() {
           <Card key={side} className="p-5">
             <CardHeader
               title={side === "gainers" ? "Top Gainers" : "Top Losers"}
-              subtitle="By % change (sample)"
+              subtitle="By % change (latest available)"
               right={<Activity size={15} className={side === "gainers" ? "text-pos" : "text-neg"} />}
             />
             {errStocks ? (

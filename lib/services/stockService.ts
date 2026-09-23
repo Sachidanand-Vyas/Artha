@@ -1,142 +1,256 @@
-import type { Stock, Technicals, TimeRange } from "@/lib/types";
-import { getStock, stocks } from "@/lib/mock/stocks";
-import { delay } from "@/lib/services/delay";
-import { generateCandles, type GeneratedCandle } from "@/lib/utils";
+/**
+ * STOCK SERVICE — the single entry point every page uses for stock data.
+ *
+ * The implementation talks to the FastAPI backend (see backend/), which owns
+ * market-data fetching, indicator calculation and the recommendation model.
+ * The frontend never computes financial values itself.
+ *
+ * Interface unchanged: components keep calling `stockService.*`.
+ */
+
+import type {
+  Stock,
+  StockAnalysis,
+  StockPrediction,
+  Technicals,
+  TimeRange,
+} from "@/lib/types";
+import { apiGet, isNotFound } from "@/lib/services/api";
+import type { GeneratedCandle } from "@/lib/utils";
+
+/* --------------------------- Backend wire types --------------------------- */
+
+interface ApiCandle {
+  time: number; // unix seconds
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+interface ApiFundamentals {
+  pe: number | null;
+  pb: number | null;
+  eps: number | null;
+  roe: number | null;
+  roce: number | null;
+  debt_to_equity: number | null;
+  market_cap: number | null;
+  revenue: number | null;
+  net_profit: number | null;
+  revenue_growth: number | null;
+  profit_growth: number | null;
+  dividend_yield: number | null;
+  beta: number | null;
+}
+
+interface ApiStockSummary {
+  symbol: string;
+  name: string;
+  exchange: string;
+  country: "IN" | "US";
+  sector: string;
+  currency: "INR" | "USD";
+  price: number;
+  change: number;
+  change_percent: number;
+  timestamp: string;
+  source: string;
+  week52_high: number | null;
+  week52_low: number | null;
+  risk: "Low" | "Moderate" | "High" | null;
+  insight: string;
+  summary: string;
+  fundamentals: ApiFundamentals;
+}
+
+interface ApiTechnical {
+  price: number;
+  rsi: number;
+  macd: number;
+  macd_signal: number;
+  macd_histogram: number[];
+  sma_20: number;
+  sma_50: number;
+  sma_200: number | null;
+  ema_20: number;
+  support: number;
+  resistance: number;
+  volatility: number;
+  volume: number;
+  volume_avg: number;
+  volume_trend: number;
+  latest_return: number;
+  return_20d: number;
+  sma20_above_50: boolean;
+}
+
+interface ApiPrediction {
+  signal: "BUY" | "HOLD" | "SELL";
+  score: number;
+  signal_strength: number;
+  reasons: string[];
+  model: string;
+  generated_at: string;
+}
+
+interface ApiStockAnalysis extends ApiStockSummary {
+  historical_data: ApiCandle[];
+  technical: ApiTechnical;
+  prediction: ApiPrediction;
+}
+
+interface ApiCandleResponse {
+  candles: ApiCandle[];
+  source: string;
+}
+
+/* -------------------------------- Mapping -------------------------------- */
+
+const num = (v: number | null | undefined): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+
+function mapSummary(b: ApiStockSummary): Stock {
+  const f = b.fundamentals ?? ({} as ApiFundamentals);
+  return {
+    symbol: b.symbol,
+    name: b.name,
+    exchange: b.exchange,
+    country: b.country,
+    sector: b.sector,
+    currency: b.currency,
+    price: b.price,
+    change: b.change,
+    changePct: b.change_percent,
+    marketCap: num(f.market_cap),
+    pe: num(f.pe),
+    pb: num(f.pb),
+    roe: num(f.roe),
+    roce: num(f.roce),
+    debtToEquity: num(f.debt_to_equity),
+    dividendYield: num(f.dividend_yield),
+    eps: num(f.eps),
+    revenue: num(f.revenue),
+    netProfit: num(f.net_profit),
+    beta: num(f.beta),
+    week52High: b.week52_high ?? b.price,
+    week52Low: b.week52_low ?? b.price,
+    risk: b.risk ?? null,
+    insight: b.insight ?? "",
+    summary: b.summary ?? "",
+    timestamp: b.timestamp,
+    source: b.source,
+  };
+}
+
+function mapTechnicals(t: ApiTechnical): Technicals {
+  return {
+    rsi: t.rsi,
+    macd: t.macd,
+    macdSignal: t.macd_signal,
+    macdHistogram: t.macd_histogram ?? [],
+    support: t.support,
+    resistance: t.resistance,
+    ma20: t.sma_20,
+    ma50: t.sma_50,
+    ma200: t.sma_200 ?? t.price, // not enough history -> fall back to price
+    sma20Above50: t.sma20_above_50,
+    volumeAvg: t.volume_avg,
+    // Extra backend-computed values (consumed by the Advisor):
+    ema20: t.ema_20,
+    volatility: t.volatility,
+    volume: t.volume,
+    volumeTrend: t.volume_trend,
+    latestReturn: t.latest_return,
+    return20d: t.return_20d,
+  };
+}
+
+function mapPrediction(p: ApiPrediction): StockPrediction {
+  return {
+    signal: p.signal,
+    score: p.score,
+    signalStrength: p.signal_strength,
+    reasons: p.reasons ?? [],
+    model: p.model,
+    generatedAt: p.generated_at,
+  };
+}
+
+function mapAnalysis(b: ApiStockAnalysis): StockAnalysis {
+  return {
+    ...mapSummary(b),
+    technical: mapTechnicals(b.technical),
+    prediction: mapPrediction(b.prediction),
+  };
+}
+
+/* -------------------------------- Service -------------------------------- */
+
+/** Cache lifetimes per chart range (seconds of staleness the UI tolerates). */
+const RANGE_TTL: Record<TimeRange, number> = {
+  "1D": 60_000,
+  "1W": 60_000,
+  "1M": 300_000,
+  "6M": 300_000,
+  "1Y": 300_000,
+  "5Y": 600_000,
+};
+
+const ANALYSIS_TTL = 60_000;
+const UNIVERSE_TTL = 60_000;
+
+const enc = encodeURIComponent;
 
 export interface StockService {
   getStocks(): Promise<Stock[]>;
-  getStock(symbol: string): Promise<Stock | undefined>;
+  /** Full analysis (quote + technicals + prediction). undefined = unknown symbol. */
+  getStock(symbol: string): Promise<StockAnalysis | undefined>;
   getCandles(symbol: string, range: TimeRange): Promise<GeneratedCandle[]>;
   getTechnicals(symbol: string): Promise<Technicals>;
 }
 
-/* Range configuration: bar interval (seconds), bar count, drift, volatility */
-const RANGE_CFG: Record<
-  TimeRange,
-  { intervalSec: number; bars: number; drift: number; vol: number }
-> = {
-  "1D": { intervalSec: 300, bars: 75, drift: 0.00012, vol: 0.0022 },
-  "1W": { intervalSec: 3600, bars: 34, drift: 0.0006, vol: 0.004 },
-  "1M": { intervalSec: 86400, bars: 22, drift: 0.0012, vol: 0.011 },
-  "6M": { intervalSec: 86400, bars: 126, drift: 0.001, vol: 0.012 },
-  "1Y": { intervalSec: 86400, bars: 252, drift: 0.0009, vol: 0.013 },
-  "5Y": { intervalSec: 604800, bars: 260, drift: 0.0007, vol: 0.02 },
-};
-
-const hash = (s: string) => {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-};
-
-const candleCache = new Map<string, GeneratedCandle[]>();
-
 export const stockService: StockService = {
   async getStocks() {
-    await delay(360);
-    return stocks;
+    const rows = await apiGet<ApiStockSummary[]>("/api/stocks", UNIVERSE_TTL);
+    return (rows ?? []).map(mapSummary);
   },
+
   async getStock(symbol) {
-    await delay(260);
-    return getStock(symbol);
-  },
-  async getCandles(symbol, range) {
-    await delay(420);
-    const key = `${symbol}:${range}`;
-    const cached = candleCache.get(key);
-    if (cached) return cached;
-
-    const stock = getStock(symbol)!;
-    const cfg = RANGE_CFG[range];
-    const end = Date.now() / 1000;
-    const raw = generateCandles(
-      hash(`${symbol}:${range}`),
-      cfg.bars,
-      stock.price * 0.92,
-      cfg.intervalSec,
-      end,
-      cfg.drift,
-      cfg.vol,
-    );
-    // Scale so the last close equals the current price
-    const last = raw[raw.length - 1].close;
-    const factor = stock.price / last;
-    const scaled = raw.map((c) => ({
-      ...c,
-      open: c.open * factor,
-      high: c.high * factor,
-      low: c.low * factor,
-      close: c.close * factor,
-    }));
-    candleCache.set(key, scaled);
-    return scaled;
-  },
-  async getTechnicals(symbol) {
-    await delay(380);
-    const candles = await stockService.getCandles(symbol, "1Y");
-    const closes = candles.map((c) => c.close);
-
-    const sma = (n: number) => {
-      if (closes.length < n) return closes[closes.length - 1];
-      const slice = closes.slice(-n);
-      return slice.reduce((a, b) => a + b, 0) / n;
-    };
-    const sma20 = sma(20);
-    const sma50 = sma(50);
-    const sma200 = sma(200);
-
-    // RSI(14)
-    let gains = 0;
-    let losses = 0;
-    const len = Math.min(closes.length - 1, 14);
-    for (let i = closes.length - 14; i < closes.length; i++) {
-      const d = closes[i] - closes[i - 1];
-      if (d >= 0) gains += d;
-      else losses -= d;
+    try {
+      const data = await apiGet<ApiStockAnalysis>(
+        `/api/stocks/${enc(symbol)}`,
+        ANALYSIS_TTL,
+      );
+      return mapAnalysis(data);
+    } catch (error) {
+      // Unknown/blocked symbol -> let the page show its empty state.
+      if (isNotFound(error)) return undefined;
+      throw error; // network/provider failure -> page shows an error state
     }
-    gains /= len;
-    losses /= len;
-    const rsi = losses === 0 ? 100 : 100 - 100 / (1 + gains / losses);
+  },
 
-    // MACD(12,26,9)
-    const ema = (period: number, arr: number[]) => {
-      const k = 2 / (period + 1);
-      let e = arr[0];
-      for (let i = 1; i < arr.length; i++) e = arr[i] * k + e * (1 - k);
-      return e;
-    };
-    const ema12 = ema(12, closes);
-    const ema26 = ema(26, closes);
-    const macd = ema12 - ema26;
-    const macdSignal = ema(9, closes.slice(-40).map((_, i, a) => ema(12, a.slice(0, i + 1)) - ema(26, a.slice(0, i + 1))));
+  async getCandles(symbol, range) {
+    const data = await apiGet<ApiCandleResponse>(
+      `/api/stocks/${enc(symbol)}/candles?range=${range}`,
+      RANGE_TTL[range],
+    );
+    return (data?.candles ?? []).map((c) => ({
+      time: c.time,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      volume: c.volume,
+    }));
+  },
 
-    const last60 = candles.slice(-60);
-    const support = Math.min(...last60.map((c) => c.low)) * 0.995;
-    const resistance = Math.max(...last60.map((c) => c.high)) * 1.005;
-    const volumeAvg = candles.slice(-20).reduce((a, c) => a + c.volume, 0) / 20;
-
-    const macdHistogram = closes.slice(-24).map((_, i) => {
-      const arr = closes.slice(0, closes.length - 24 + i + 1);
-      const m = ema(12, arr) - ema(26, arr);
-      const s = ema(9, arr);
-      return m - s;
-    });
-
-    return {
-      rsi,
-      macd,
-      macdSignal,
-      macdHistogram,
-      support,
-      resistance,
-      ma20: sma20,
-      ma50: sma50,
-      ma200: sma200,
-      sma20Above50: sma20 > sma50,
-      volumeAvg,
-    };
+  async getTechnicals(symbol) {
+    const data = await apiGet<ApiStockAnalysis>(
+      `/api/stocks/${enc(symbol)}`,
+      ANALYSIS_TTL,
+    );
+    return mapTechnicals(data.technical);
   },
 };

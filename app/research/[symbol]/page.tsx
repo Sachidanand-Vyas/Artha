@@ -4,14 +4,15 @@ import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Star } from "lucide-react";
-import type { Stock, TimeRange } from "@/lib/types";
+import type { Stock, StockPrediction, TimeRange } from "@/lib/types";
 import { stockService } from "@/lib/services/stockService";
 import { useAsync } from "@/lib/hooks/useAsync";
 import { useAppStore } from "@/lib/store/useAppStore";
-import { cn, currencyOf, istMarketOpen, pct, signed } from "@/lib/utils";
+import { cn, currencyOf, formatShortDate, istMarketOpen, pct, signed, timeAgo } from "@/lib/utils";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { RiskBadge, StatusPill } from "@/components/ui/Badge";
 import { Tabs } from "@/components/ui/Tabs";
+import { ProgressBar } from "@/components/ui/Progress";
 import { EmptyState, ErrorState, SkeletonCard, SkeletonRows } from "@/components/ui/States";
 import { StockPriceChart } from "@/components/research/StockPriceChart";
 import { FundamentalGrid } from "@/components/research/FundamentalGrid";
@@ -20,15 +21,89 @@ import { AskArthaPanel } from "@/components/research/AskArthaPanel";
 
 const RANGES: TimeRange[] = ["1D", "1W", "1M", "6M", "1Y", "5Y"];
 
+const SIGNAL_TONE: Record<StockPrediction["signal"], "pos" | "neg" | "gold"> = {
+  BUY: "pos",
+  SELL: "neg",
+  HOLD: "gold",
+};
+const SIGNAL_TEXT: Record<StockPrediction["signal"], string> = {
+  BUY: "text-pos",
+  SELL: "text-neg",
+  HOLD: "text-gold",
+};
+
+/**
+ * BUY / HOLD / SELL card — every value here comes from the backend's
+ * feature-based scoring model. The strength is a heuristic, explicitly not a
+ * probability or an accuracy claim.
+ */
+function RecommendationCard({ prediction, generatedAt }: { prediction: StockPrediction; generatedAt?: string }) {
+  const tone = SIGNAL_TONE[prediction.signal];
+  const ts = generatedAt ? Date.parse(generatedAt) : NaN;
+
+  return (
+    <Card className="p-5">
+      <CardHeader
+        title="Recommendation"
+        subtitle="Calculated from this stock's measured indicators & fundamentals"
+        right={
+          <StatusPill tone={tone}>
+            {prediction.signal}
+          </StatusPill>
+        }
+      />
+      <div className="mt-4 flex items-end justify-between gap-4">
+        <div>
+          <p className="text-[11px] text-muted">Model score</p>
+          <p className={cn("text-2xl font-bold tnum", SIGNAL_TEXT[prediction.signal])}>
+            {prediction.score > 0 ? "+" : ""}
+            {prediction.score.toFixed(1)}
+            <span className="ml-1 text-[11px] font-medium text-muted">/ ±100</span>
+          </p>
+        </div>
+        <div className="flex-1 text-right">
+          <p className="text-[11px] text-muted">Signal strength</p>
+          <p className="text-lg font-bold tnum text-ink">{prediction.signalStrength.toFixed(1)}</p>
+          <ProgressBar
+            value={Math.min(100, prediction.signalStrength)}
+            tone={tone === "neg" ? "gold" : tone}
+            className="mt-1 !h-1"
+          />
+        </div>
+      </div>
+
+      <div className="mt-4 border-t border-edge pt-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-gold">Why?</p>
+        <ul className="mt-2 space-y-1.5">
+          {prediction.reasons.map((r, i) => (
+            <li key={i} className="flex items-start gap-2 text-[12.5px] leading-relaxed text-secondary">
+              <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-gold/70" />
+              {r}
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <p className="mt-4 border-t border-edge pt-3 text-[10.5px] leading-relaxed text-muted">
+        {prediction.model}
+        {Number.isFinite(ts) && <> · generated {timeAgo(ts)}</>}. Signal strength is a heuristic score, not a
+        probability or model accuracy. Educational analysis — not investment advice.
+      </p>
+    </Card>
+  );
+}
+
 export default function ResearchPage() {
   const params = useParams<{ symbol: string }>();
   const symbol = (params?.symbol ?? "RELIANCE").toUpperCase();
   const [range, setRange] = useState<TimeRange>("1M");
 
-  const { data: stock, loading: loadingStock } = useAsync(
-    () => stockService.getStock(symbol),
-    [symbol],
-  );
+  const {
+    data: stock,
+    loading: loadingStock,
+    error: errStock,
+    reload: reloadStock,
+  } = useAsync(() => stockService.getStock(symbol), [symbol]);
   const { data: candles, loading: loadingCandles, error: errCandles, reload: reloadCandles } = useAsync(
     () => stockService.getCandles(symbol, range),
     [symbol, range],
@@ -58,14 +133,20 @@ export default function ResearchPage() {
     );
   }
 
+  // Backend unreachable / provider failure -> retryable error state.
+  if (!stock && errStock) {
+    return <ErrorState message={errStock.message} onRetry={reloadStock} />;
+  }
+
+  // Backend answered but has no data for this symbol -> empty state.
   if (!stock) {
     return (
       <EmptyState
         title={`No data for "${symbol}"`}
-        message="This symbol is not in the sample universe. Try a known one like RELIANCE, TCS or NVDA."
+        message="This symbol is not available from the market-data provider. Try a known NSE symbol like RELIANCE, TCS or INFY."
         action={
           <Link href="/research/RELIANCE" className="btn-primary">
-            Open sample stock
+            Open RELIANCE
           </Link>
         }
       />
@@ -74,6 +155,7 @@ export default function ResearchPage() {
 
   const fmt = currencyOf(stock.currency);
   const rangePct = ((stock.price - stock.week52Low) / (stock.week52High - stock.week52Low)) * 100;
+  const asOf = stock.timestamp ? Date.parse(stock.timestamp) : NaN;
 
   return (
     <div className="space-y-6">
@@ -86,8 +168,14 @@ export default function ResearchPage() {
               {stock.symbol} · {stock.exchange}
             </span>
             <RiskBadge risk={stock.risk} />
+            <StatusPill tone="info">Latest available data</StatusPill>
           </div>
           <p className="mt-1 text-[13px] text-secondary">{stock.summary}</p>
+          {Number.isFinite(asOf) && (
+            <p className="mt-1 text-[11px] text-muted">
+              Data as of {formatShortDate(asOf)} · source: {stock.source}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <div className="text-right">
@@ -96,7 +184,7 @@ export default function ResearchPage() {
               <span className={stock.change >= 0 ? "text-pos" : "text-neg"}>
                 {signed(stock.change, 2)} ({pct(stock.changePct)})
               </span>
-              <span className="ml-2 text-muted">today</span>
+              <span className="ml-2 text-muted">latest available</span>
             </p>
           </div>
           <button
@@ -122,7 +210,7 @@ export default function ResearchPage() {
           <Card className="p-5">
             <CardHeader
               title={`Price — ${range}`}
-              subtitle="Candlestick chart, sample data"
+              subtitle={`Candlestick chart · real OHLC from ${stock.source}`}
               right={
                 <div className="flex items-center gap-2">
                   <span className="hidden items-center gap-1.5 text-[11px] text-muted sm:flex">
@@ -143,14 +231,19 @@ export default function ResearchPage() {
             </div>
             <div className="mt-4">
               {errCandles ? (
-                <ErrorState onRetry={reloadCandles} />
+                <ErrorState message={errCandles.message} onRetry={reloadCandles} />
               ) : loadingCandles || !candles ? (
                 <SkeletonCard className="h-[360px] !rounded-xl" />
+              ) : candles.length === 0 ? (
+                <EmptyState
+                  title="No candles for this range"
+                  message="The provider has no history for the selected period. Try another range."
+                />
               ) : (
                 <StockPriceChart candles={candles} range={range} showMAs={range !== "1D"} height={360} />
               )}
             </div>
-            {!loadingCandles && candles && (
+            {!loadingCandles && candles && candles.length > 0 && (
               <div className="mt-2 flex items-center gap-4 text-[11px] text-muted">
                 <span>
                   Open <span className="tnum text-secondary">{fmt(candles[0].open)}</span>
@@ -162,7 +255,7 @@ export default function ResearchPage() {
                   Low <span className="tnum text-neg">{fmt(Math.min(...candles.map((c) => c.low)))}</span>
                 </span>
                 <span className="ml-auto">
-                  Illustrative — not live market data
+                  Latest available market data — may be delayed, not live
                 </span>
               </div>
             )}
@@ -172,7 +265,7 @@ export default function ResearchPage() {
           <Card className="p-5">
             <CardHeader
               title="Fundamental Analysis"
-              subtitle="Hover any metric to learn what it means"
+              subtitle="Provider-supplied metrics — unavailable values show N/A"
             />
             <div className="mt-4">
               <FundamentalGrid stock={stock} />
@@ -183,12 +276,12 @@ export default function ResearchPage() {
           <Card className="p-5">
             <CardHeader
               title="Technical Analysis"
-              subtitle="Computed from the sample series — momentum gauges, not signals"
-              right={<StatusPill tone="info">Illustrative</StatusPill>}
+              subtitle="Calculated on the backend from the same OHLCV series — momentum gauges, not signals"
+              right={<StatusPill tone="info">Backend-computed</StatusPill>}
             />
             <div className="mt-4">
               {errTech ? (
-                <ErrorState onRetry={reloadTech} />
+                <ErrorState message={errTech.message} onRetry={reloadTech} />
               ) : loadingTech || !tech ? (
                 <SkeletonRows rows={4} />
               ) : (
@@ -199,7 +292,7 @@ export default function ResearchPage() {
 
           {/* Peers */}
           <Card className="p-5">
-            <CardHeader title="Sector Peers" subtitle={`Other sample stocks in ${stock.sector}`} />
+            <CardHeader title="Sector Peers" subtitle={`Other tracked stocks in ${stock.sector}`} />
             <div className="mt-3 flex flex-wrap gap-2">
               {(peerList ?? []).map((p) => (
                 <Link
@@ -220,6 +313,8 @@ export default function ResearchPage() {
 
         {/* Right column */}
         <div className="space-y-6">
+          <RecommendationCard prediction={stock.prediction} generatedAt={stock.prediction.generatedAt} />
+
           <AskArthaPanel key={stock.symbol} stock={stock} />
 
           <Card className="p-5">
@@ -228,14 +323,18 @@ export default function ResearchPage() {
               <div className="flex items-center justify-between">
                 <span className="text-muted">Market cap</span>
                 <span className="font-semibold tnum text-ink">
-                  {stock.currency === "INR"
-                    ? `₹${(stock.marketCap / 1e7).toFixed(0)} Cr`
-                    : `$${(stock.marketCap / 1e9).toFixed(1)}B`}
+                  {stock.marketCap == null
+                    ? "N/A"
+                    : stock.currency === "INR"
+                      ? `₹${(stock.marketCap / 1e7).toFixed(0)} Cr`
+                      : `$${(stock.marketCap / 1e9).toFixed(1)}B`}
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-muted">Beta</span>
-                <span className="font-semibold tnum text-ink">{stock.beta.toFixed(2)}</span>
+                <span className="font-semibold tnum text-ink">
+                  {stock.beta == null ? "N/A" : stock.beta.toFixed(2)}
+                </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-muted">Sector</span>

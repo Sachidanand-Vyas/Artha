@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Artha — AI-Powered Wealth Intelligence",
   description:
-    "Artha is an AI-driven financial literacy and decision-support platform that explains why — not just what to do. Educational insights, risk analysis and portfolio intelligence on sample data.",
+    "Artha is an AI-driven financial literacy and decision-support platform that explains why — not just what to do. Technical and fundamental analysis on real market data, with transparent BUY/HOLD/SELL reasoning. Not financial advice.",
 };
 
 export default function RootLayout({

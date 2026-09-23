@@ -97,7 +97,7 @@ function AddAssetMenu({
                   autoFocus
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search the sample universe…"
+                  placeholder="Search the universe…"
                   className="input !py-1.5 !pl-8 text-xs"
                 />
               </div>
@@ -169,13 +169,13 @@ export default function WatchlistPage() {
           cmp = a.changePct - b.changePct;
           break;
         case "marketCap":
-          cmp = a.marketCap - b.marketCap;
+          cmp = (a.marketCap ?? -Infinity) - (b.marketCap ?? -Infinity);
           break;
         case "pe":
           cmp = (a.pe ?? Infinity) - (b.pe ?? Infinity);
           break;
         case "risk":
-          cmp = RISK_ORDER[a.risk] - RISK_ORDER[b.risk];
+          cmp = (a.risk ? RISK_ORDER[a.risk] : 99) - (b.risk ? RISK_ORDER[b.risk] : 99);
           break;
       }
       return sortDir === "asc" ? cmp : -cmp;
@@ -194,7 +194,7 @@ export default function WatchlistPage() {
     <div className="space-y-6">
       <PageHeader
         title="Watchlist"
-        subtitle="Track the assets you care about. Sorting, filtering and insights all work on the sample universe — connect a live feed through stockService later."
+        subtitle="Track the assets you care about. Prices, fundamentals and insights come from the backend market-data service (latest available, may be delayed)."
         right={<AddAssetMenu universe={universe ?? []} watchlist={watchlist} onAdd={toggleWatchlist} />}
       />
 
@@ -242,7 +242,7 @@ export default function WatchlistPage() {
               title={watchlist.length === 0 ? "Your watchlist is empty" : "No assets match"}
               message={
                 watchlist.length === 0
-                  ? "Add assets from the sample universe to track prices, fundamentals and AI insights in one place."
+                  ? "Add assets from the tracked universe to watch prices, fundamentals and insights in one place."
                   : "Try a different search term or risk filter."
               }
               action={
@@ -298,9 +298,9 @@ export default function WatchlistPage() {
                         <TrendBadge value={s.change} pct={s.changePct} />
                       </td>
                       <td className="px-3 py-3 text-right tnum text-secondary">
-                        {marketCapLabel(s.marketCap, s.currency)}
+                        {s.marketCap != null ? marketCapLabel(s.marketCap, s.currency) : "N/A"}
                       </td>
-                      <td className="px-3 py-3 text-right tnum text-secondary">{s.pe ? num2(s.pe) : "—"}</td>
+                      <td className="px-3 py-3 text-right tnum text-secondary">{s.pe != null ? num2(s.pe) : "N/A"}</td>
                       <td className="px-3 py-3">
                         <div className="flex flex-col items-start gap-1">
                           <div className="flex w-full justify-between text-[10px] tnum text-muted">
@@ -341,10 +341,12 @@ export default function WatchlistPage() {
 
         {!loading && rows.length > 0 && (
           <div className="flex items-center justify-between border-t border-edge px-4 py-2.5 text-[11px] text-muted">
-            <span>
-              Showing {rows.length} of {watchlist.length} tracked assets
-            </span>
-            <span>Click any asset to open full research</span>
+        <span>
+          Showing {rows.length} of {watchlist.length} tracked assets
+        </span>
+        <span>
+          {rows[0]?.source ? `${rows[0].source} · latest available prices · click any asset to open research` : "Click any asset to open full research"}
+        </span>
           </div>
         )}
       </Card>

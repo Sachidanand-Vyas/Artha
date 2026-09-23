@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bot, MessageSquarePlus, Send, Sparkles, Trash2, User } from "lucide-react";
 import type { AdvisorMessage } from "@/lib/types";
 import { aiService } from "@/lib/services/aiService";
-import { suggestedPrompts } from "@/lib/mock/ai";
+import { suggestedPrompts } from "@/lib/advisor/knowledge";
 import { useAppStore, ensureSeedConversation } from "@/lib/store/useAppStore";
 import { useAsync } from "@/lib/hooks/useAsync";
 import { portfolioService } from "@/lib/services/portfolioService";
@@ -90,13 +90,15 @@ function ChatMessage({ msg }: { msg: AdvisorMessage }) {
 function ContextPanel() {
   const { data: summary } = useAsync(() => portfolioService.getSummary(), []);
   const { data: metrics } = useAsync(() => analyticsService.getMetrics(), []);
+  const { data: sectors } = useAsync(() => portfolioService.getSectorAllocation(), []);
 
   return (
     <div className="hidden w-72 shrink-0 flex-col gap-4 xl:flex">
       <div className="card p-4">
         <p className="section-label">Context snapshot</p>
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          What Artha can reference while answering. Sample data — real services plug in via the API layer.
+          What Artha can reference while answering. Portfolio value comes from the backend at latest available
+          prices; the risk score is a demo metric.
         </p>
         <div className="mt-3 space-y-2 text-[13px]">
           <div className="flex justify-between">
@@ -113,7 +115,9 @@ function ContextPanel() {
           </div>
           <div className="flex justify-between">
             <span className="text-muted">Top sector</span>
-            <span className="font-semibold text-ink">IT Services</span>
+            <span className="font-semibold text-ink">
+              {sectors?.length ? `${sectors[0].sector} (${sectors[0].pct.toFixed(0)}%)` : "N/A"}
+            </span>
           </div>
         </div>
       </div>
@@ -136,10 +140,11 @@ function ContextPanel() {
       </div>
 
       <div className="rounded-xl border border-dashed border-edgestrong p-4">
-        <p className="text-[11px] font-semibold text-secondary">How it works now</p>
+        <p className="text-[11px] font-semibold text-secondary">How it works</p>
         <p className="mt-1 text-[11px] leading-relaxed text-muted">
-          Replies come from a rule-based demo engine (see <span className="font-mono">aiService</span>). A
-          conversational LLM + RAG backend can implement the same interface later without UI changes.
+          Artha routes each question to the finance knowledge base, the backend stock/portfolio/market services or the
+          calculation engine (<span className="font-mono">aiService</span> → FastAPI). An LLM can be plugged in via
+          env config; without one, answers are rendered locally from the same real data.
         </p>
       </div>
     </div>
@@ -189,15 +194,24 @@ export default function AdvisorPage() {
     setInput("");
     const convId = shownId ?? createConversation();
     const mid = () => `m${Date.now()}-${msgIdRef.current++}`;
+    // Prior turns give the Advisor context for follow-ups ("Why?", "What about TCS?").
+    const history = (active?.messages ?? []).map((m) => ({ role: m.role, text: m.text }));
     addMessage(convId, { id: mid(), role: "user", text: trimmed, ts: Date.now() });
     setBusy(true);
     try {
-      const reply = await aiService.getAdvisorReply(trimmed);
+      const reply = await aiService.getAdvisorReply(trimmed, history);
       addMessage(convId, {
         id: mid(),
         role: "assistant",
         text: reply.text,
         structured: reply.structured,
+        ts: Date.now(),
+      });
+    } catch {
+      addMessage(convId, {
+        id: mid(),
+        role: "assistant",
+        text: "Something went wrong reaching the Advisor. Please try again — if it keeps happening, check that the FastAPI backend is running on port 8000.",
         ts: Date.now(),
       });
     } finally {
@@ -257,7 +271,7 @@ export default function AdvisorPage() {
               Explains the reasoning — it never just tells you what to do.
             </p>
           </div>
-          <StatusPill tone="gold">Rule-based demo</StatusPill>
+          <StatusPill tone="gold">Finance Assistant</StatusPill>
         </div>
 
         <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
@@ -305,7 +319,7 @@ export default function AdvisorPage() {
                 }
               }}
               rows={1}
-              placeholder="Ask about a stock, a plan, a risk…"
+              placeholder="Ask Artha anything about finance…"
               className="input max-h-32 min-h-[42px] flex-1 resize-none !rounded-xl !py-2.5"
             />
             <button
@@ -318,7 +332,8 @@ export default function AdvisorPage() {
             </button>
           </form>
           <p className="mt-2 text-center text-[10px] text-muted">
-            Educational demo on sample data — not financial advice. A live LLM backend can replace this via the aiService interface.
+            Concepts, exact calculations and real backend data (latest available, may be delayed) — educational, not
+            financial advice. Optional LLM formatting via env config; works without one.
           </p>
         </div>
       </div>

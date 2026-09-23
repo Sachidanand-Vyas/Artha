@@ -4,8 +4,9 @@ import { useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Bell, Command, Menu, Search } from "lucide-react";
 import { cn, formatFullDate, istMarketOpen } from "@/lib/utils";
-import { stocks } from "@/lib/mock/stocks";
-import { indices } from "@/lib/mock/markets";
+import { stockService } from "@/lib/services/stockService";
+import { marketService } from "@/lib/services/marketService";
+import { useAsync } from "@/lib/hooks/useAsync";
 import { useAppStore } from "@/lib/store/useAppStore";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -49,21 +50,24 @@ function SearchBox({ onNavigate }: { onNavigate?: () => void }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const watchlist = useAppStore((s) => s.watchlist);
+  // Same services every other page uses — search prices always match Research.
+  const { data: stocks } = useAsync(() => stockService.getStocks(), []);
+  const { data: indices } = useAsync(() => marketService.getIndices(), []);
 
   const results = useMemo(() => {
     if (!q.trim()) return { stocks: [], indices: [] };
     const needle = q.trim().toLowerCase();
     return {
-      stocks: stocks
+      stocks: (stocks ?? [])
         .filter(
           (s) =>
             s.symbol.toLowerCase().includes(needle) ||
             s.name.toLowerCase().includes(needle),
         )
         .slice(0, 6),
-      indices: indices.filter((i) => i.symbol.toLowerCase().includes(needle)).slice(0, 3),
+      indices: (indices ?? []).filter((i) => i.symbol.toLowerCase().includes(needle)).slice(0, 3),
     };
-  }, [q]);
+  }, [q, stocks, indices]);
 
   const go = (path: string) => {
     router.push(path);

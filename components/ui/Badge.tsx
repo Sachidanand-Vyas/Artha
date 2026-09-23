@@ -33,12 +33,20 @@ export function TrendBadge({
   );
 }
 
-export function RiskBadge({ risk }: { risk: RiskLevel }) {
+export function RiskBadge({ risk }: { risk: RiskLevel | null }) {
   const map: Record<RiskLevel, string> = {
     Low: "bg-possoft text-pos",
     Moderate: "bg-goldsoft text-gold",
     High: "bg-negsoft text-neg",
   };
+  if (!risk) {
+    // Provider did not expose a volatility-based label — show N/A, never guess.
+    return (
+      <span className="inline-flex items-center rounded-full border border-edge bg-surface2/70 px-2 py-0.5 text-[11px] font-semibold text-muted">
+        N/A
+      </span>
+    );
+  }
   return (
     <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold", map[risk])}>
       {risk}

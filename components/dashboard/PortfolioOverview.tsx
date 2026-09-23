@@ -79,8 +79,8 @@ export function PortfolioOverview() {
   }
 
   const stats = [
-    { label: "Total Portfolio Value", value: inr(data.totalValue), explain: "Current market value of all holdings, including cash, gold and debt allocations." },
-    { label: "Invested Amount", value: inr(data.invested), explain: "The total money you have put in so far across all investments." },
+    { label: "Total Portfolio Value", value: inr(data.totalValue), explain: "Current market value of your holdings at latest available prices, plus available cash." },
+    { label: "Invested Amount", value: inr(data.invested), explain: "Total cost basis of the shares you hold (quantity × average buy price)." },
     { label: "Today's Change", value: `${data.todayChange >= 0 ? "+" : ""}${inr(Math.abs(data.todayChange))}`, tone: data.todayChange >= 0 ? "text-pos" : "text-neg", explain: "Change in your portfolio value since the previous market close." },
     { label: "Available Cash", value: inr(data.availableCash), explain: "Uninvested cash ready to deploy or keep as a buffer." },
   ];
@@ -89,12 +89,20 @@ export function PortfolioOverview() {
     <Card className="p-5">
       <CardHeader
         title="Portfolio Overview"
-        subtitle="Last 24 months, vs a benchmark"
+        subtitle="Current value is real · 24-month shape vs a benchmark is illustrative"
         right={
           <div className="flex items-center gap-4">
             <div className="text-right">
               <p className="text-[11px] text-muted">Overall return</p>
-              <p className="text-sm font-bold text-pos tnum">+{data.overallReturnPct.toFixed(1)}%</p>
+              <p
+                className={cn(
+                  "text-sm font-bold tnum",
+                  data.overallReturnPct >= 0 ? "text-pos" : "text-neg",
+                )}
+              >
+                {data.overallReturnPct >= 0 ? "+" : ""}
+                {data.overallReturnPct.toFixed(1)}%
+              </p>
             </div>
             <TrendBadge value={data.todayChange} pct={data.todayChangePct} />
           </div>
@@ -159,7 +167,8 @@ export function PortfolioOverview() {
 
       <div className="mt-3 flex items-center gap-2 text-[11px] text-muted">
         <Wallet size={12} />
-        Sample data — connect a portfolio API through <span className="font-mono text-secondary">portfolioService</span> for live values.
+        Holdings valued at latest available market prices via the FastAPI backend. The historical line is
+        illustrative — Artha does not store past portfolio values.
       </div>
     </Card>
   );

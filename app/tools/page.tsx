@@ -127,7 +127,7 @@ const TOOLS: ToolDef[] = [
         title="Portfolio Analyzer"
         description="Real HHI math applied to your sample holdings — how concentrated your portfolio really is."
         onBack={onBack}
-        disclaimer="Analyzes the sample portfolio. Connect real holdings through portfolioService for your own numbers."
+        disclaimer="Analyzes your demo holdings valued at latest available market prices. Enter your own through portfolioService for your own numbers."
       >
         <PortfolioAnalyzer />
       </ToolShell>
@@ -169,15 +169,15 @@ const TOOLS: ToolDef[] = [
   {
     id: "backtest",
     name: "Backtesting",
-    description: "SIP vs lump sum on a synthetic index series.",
+    description: "SIP vs lump sum replayed on real NIFTY history.",
     icon: Calculator,
     status: "beta",
     component: ({ onBack }) => (
       <ToolShell
         title="Backtesting Workbench"
-        description="Compare SIP averaging against lump-sum investing on a synthetic, deterministic 'NIFTY-like' series."
+        description="Compare SIP averaging against lump-sum investing by replaying real NIFTY 50 weekly closes, strictly forward in time."
         onBack={onBack}
-        disclaimer="The price series is synthetic sample data, not real NIFTY history. A real market-data provider is required for genuine backtests."
+        disclaimer="A historical replay on latest available index data — not a forecast, and no claim of future profitability."
       >
         <BacktestTool />
       </ToolShell>
@@ -199,7 +199,7 @@ export default function ToolsPage() {
       <PageHeader
         title="Tools"
         subtitle="Calculators and simulators with transparent math. Real computation services can replace these through the service layer later."
-        right={<StatusPill tone="info">Static math · sample data</StatusPill>}
+        right={<StatusPill tone="info">Static math · real data where available</StatusPill>}
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

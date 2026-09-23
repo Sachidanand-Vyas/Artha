@@ -12,12 +12,15 @@ import {
   YAxis,
 } from "recharts";
 import { randomWalk } from "@/lib/utils";
+import { stockService } from "@/lib/services/stockService";
+import { useAsync } from "@/lib/hooks/useAsync";
 import { fmtLakh, NumField, ResultRow } from "@/components/tools/shared";
 import { Card } from "@/components/ui/Card";
 import { StatusPill } from "@/components/ui/Badge";
+import { SkeletonRows } from "@/components/ui/States";
 
-function niftySeries(years: number) {
-  // Synthetic weekly NIFTY-like path (deterministic) ending near today's value.
+/** Fallback only: deterministic synthetic path, used when real history fails to load. */
+function syntheticSeries(years: number) {
   const weeks = years * 52;
   const raw = randomWalk(2026, weeks, 18500, 0.0011, 0.02);
   const last = raw[raw.length - 1];
@@ -29,8 +32,22 @@ export function BacktestTool() {
   const [years, setYears] = useState(5);
   const [monthly, setMonthly] = useState(10000);
 
+  // Real weekly NIFTY 50 history from the backend (5Y of it) — the same
+  // market-data service every other page uses. No future data is involved:
+  // the replay walks the series strictly forward in time.
+  const { data: candles, loading, error } = useAsync(
+    () => stockService.getCandles("^NSEI", "5Y"),
+    [],
+  );
+
   const result = useMemo(() => {
-    const series = niftySeries(years);
+    const real = (candles ?? []).map((c, i) => ({ t: i, v: c.close }));
+    const availableYears = Math.floor(real.length / 52);
+    // Requested look-back beyond available history -> use all we have and say so.
+    const useYears = Math.min(years, availableYears || years);
+    const usingReal = real.length >= 52;
+    const full = usingReal ? real : syntheticSeries(useYears);
+    const series = full.slice(Math.max(0, full.length - useYears * 52));
     const n = series.length;
     const invested = monthly * n;
     // SIP: buy monthly at the prevailing level (normalised so unit price = index)
@@ -51,16 +68,31 @@ export function BacktestTool() {
     }
     const sipValue = units * end;
     const lumpValue = lumpUnits * end;
-    const cagr = Math.pow(sipValue / invested, 1 / years) - 1;
-    return { sipValue, lumpValue, invested, cagr, chart };
-  }, [years, monthly]);
+    const cagr = Math.pow(sipValue / invested, 1 / (n / 52)) - 1;
+    return {
+      sipValue,
+      lumpValue,
+      invested,
+      cagr,
+      chart,
+      usingReal,
+      weeks: n,
+      short: usingReal && useYears < years,
+    };
+  }, [years, monthly, candles]);
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card className="space-y-4 p-5">
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold text-ink">SIP vs Lump Sum</p>
-          <StatusPill tone="info">Synthetic series</StatusPill>
+          {loading ? (
+            <StatusPill tone="info">Loading history…</StatusPill>
+          ) : error || !result.usingReal ? (
+            <StatusPill tone="gold">Synthetic fallback</StatusPill>
+          ) : (
+            <StatusPill tone="pos">Real NIFTY history</StatusPill>
+          )}
         </div>
         <NumField label="Monthly investment" value={monthly} onChange={setMonthly} suffix="₹" step={1000} />
         <div className="flex items-center gap-3">
@@ -87,11 +119,32 @@ export function BacktestTool() {
           <ResultRow label="SIP CAGR (approx)" value={`${(result.cagr * 100).toFixed(1)}%`} explain="Annualised growth of the SIP stream — approximate, not an XIRR." />
         </div>
 
-        <p className="text-[11px] leading-relaxed text-muted">
-          The “NIFTY-like” series is a deterministic synthetic path generated for this demo — it is <strong>not</strong>{" "}
-          actual NIFTY history. The exercise demonstrates the mechanics of averaging; conclusions about real markets
-          need real data (connect a market-data provider via marketService).
-        </p>
+        {loading ? (
+          <SkeletonRows rows={3} />
+        ) : (
+          <p className="text-[11px] leading-relaxed text-muted">
+            {result.usingReal ? (
+              <>
+                Replayed on {result.weeks} weeks of <strong>real NIFTY 50 weekly closes</strong> (latest available,
+                via the FastAPI backend). The walk is strictly chronological — no future data is used. This is a
+                historical illustration of averaging, not evidence of future returns.
+              </>
+            ) : (
+              <>
+                Real NIFTY history could not be loaded ({error ? "backend unavailable" : "no data"}), so this run uses a
+                deterministic synthetic path — it is <strong>not</strong> actual NIFTY history. Retry once the backend
+                is reachable.
+              </>
+            )}
+            {result.short && (
+              <>
+                {" "}
+                Only {result.weeks} weekly points are available, so the replay covers the available history rather than
+                the full {years}Y window.
+              </>
+            )}
+          </p>
+        )}
       </Card>
 
       <Card className="p-5">

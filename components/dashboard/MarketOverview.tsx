@@ -16,7 +16,7 @@ export function MarketOverview() {
     <Card className="p-5">
       <CardHeader
         title="Market Overview"
-        subtitle="Major indicators — sample data"
+        subtitle="Major indices — latest available prices"
         right={
           <Link href="/markets" className="btn-subtle -mr-2 text-xs text-gold">
             View all <ArrowRight size={13} />

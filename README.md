@@ -49,7 +49,7 @@ The frontend is built **API-first** so real backends can be connected without UI
 ## Honesty by design
 
 - All data is **clearly labelled sample data** — nothing pretends to be live.
-- AI surfaces use a **rule-based demo engine** behind `aiService`; the UI never claims an LLM is running.
+- The AI Advisor is a **general finance assistant** behind `aiService` (knowledge base + backend services + calculation engine, with optional LLM formatting via env); without an LLM configured the UI never claims one is running.
 - The Settings page lists exactly which systems are demo vs planned.
 - Everything is educational — **not financial advice.**
 

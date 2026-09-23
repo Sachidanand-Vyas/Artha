@@ -53,7 +53,8 @@ export default function DashboardPage() {
 
       <p className="flex items-center gap-1.5 pt-2 text-[11px] text-muted">
         <ArrowUpRight size={12} />
-        All figures are sample data. Artha is an educational platform — not financial advice.
+        Market data: latest available prices via the Artha backend (may be delayed, not live). News, learning and
+        transaction content is clearly-labelled demo material. Educational — not financial advice.
       </p>
     </div>
   );

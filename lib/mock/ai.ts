@@ -1,4 +1,10 @@
-import type { AdvisorStructured, AiInsight, Stock, StockQa } from "@/lib/types";
+import type {
+  AdvisorStructured,
+  AiInsight,
+  Stock,
+  StockPrediction,
+  StockQa,
+} from "@/lib/types";
 import { stocks } from "@/lib/mock/stocks";
 
 
@@ -53,19 +59,31 @@ function findStockInPrompt(prompt: string): Stock | undefined {
   return stocks.find((s) => p.includes(s.name.toUpperCase().split(" ")[0]));
 }
 
+/**
+ * Which tracked symbol the prompt mentions. The static list here is used ONLY
+ * to recognise the name — the actual data is then loaded from the backend by
+ * aiService, so answers never quote mock prices.
+ */
+export function mentionedSymbol(prompt: string): string | undefined {
+  return findStockInPrompt(prompt)?.symbol;
+}
+
 function stockStructured(s: Stock): AdvisorStructured {
   const priceNote =
     s.currency === "INR"
       ? `trades near ₹${s.price.toFixed(0)}`
       : `trades near $${s.price.toFixed(2)}`;
-  return {
-    risk: `${s.name} carries a **${s.risk.toLowerCase()}** risk label in the sample model, driven by ${
-      s.beta >= 1.3
+  const riskLabel = (s.risk ?? "Moderate").toLowerCase();
+  const betaNote =
+    s.beta == null
+      ? "its beta is not published by the data provider"
+      : s.beta >= 1.3
         ? `a high beta of ${s.beta.toFixed(2)} (it tends to move more than the market)`
         : s.risk === "Low"
           ? `a low beta of ${s.beta.toFixed(2)} and a strong balance sheet`
-          : `a beta of ${s.beta.toFixed(2)}`
-      }${
+          : `a beta of ${s.beta.toFixed(2)}`;
+  return {
+    risk: `${s.name} carries a **${riskLabel}** risk label, driven by ${betaNote}${
         s.pe && s.pe > 45
           ? ` and a rich valuation (P/E ${s.pe.toFixed(1)}).`
           : s.pe && s.pe < 15
@@ -93,7 +111,7 @@ function stockStructured(s: Stock): AdvisorStructured {
   };
 }
 
-function topicReply(prompt: string): AdvisorReply | null {
+function topicReply(prompt: string, mentionsStock: boolean): AdvisorReply | null {
   const p = prompt.toLowerCase();
 
   if (p.includes("sip") || (p.includes("invest") && p.includes("month"))) {
@@ -164,7 +182,7 @@ function topicReply(prompt: string): AdvisorReply | null {
     };
   }
 
-  if (p.includes("risk") && !findStockInPrompt(prompt)) {
+  if (p.includes("risk") && !mentionsStock) {
     return {
       text: "Risk is the possibility that outcomes differ from what you expect — and markets pay you for bearing it. The practical question is never 'is it risky?' but 'is the risk appropriate for my horizon and temperament?'",
       structured: {
@@ -201,17 +219,44 @@ function topicReply(prompt: string): AdvisorReply | null {
   return null;
 }
 
-export function advisorReply(prompt: string): AdvisorReply {
-  const stock = findStockInPrompt(prompt);
-  const topic = topicReply(prompt);
+export function advisorReply(
+  prompt: string,
+  stock?: Stock & { prediction?: StockPrediction },
+): AdvisorReply {
+  const mentioned = mentionedSymbol(prompt);
+  const topic = topicReply(prompt, Boolean(mentioned));
+
+  // The prompt names a stock but the backend has no data for it -> say so
+  // instead of falling back to sample values.
+  if (mentioned && !stock) {
+    return {
+      text: `I can see you are asking about **${mentioned}**, but the market-data backend has no history for that symbol right now, so I will not guess. Try a covered symbol such as RELIANCE, TCS, INFY, HDFCBANK or SBIN.`,
+      structured: {
+        risk: "No data means no measurement — Artha never fills gaps with invented numbers.",
+        upside: "Once the provider covers the symbol, the Research page will show price history, indicators and a calculated BUY/HOLD/SELL signal.",
+        impact: "This symbol cannot be placed in your sector mix without data.",
+        concerns: [
+          "Check the spelling / exchange of the symbol",
+          "The data provider may have paused coverage",
+        ],
+        learn: "Open Research on a covered stock to see how the pipeline works end to end.",
+      },
+    };
+  }
 
   if (stock) {
     const lower = prompt.toLowerCase();
     const ask = lower.includes("should i") || lower.includes("invest in");
+    const p = stock.prediction;
+    const signalNote = p
+      ? `\n\n**Same-engine signal:** the backend's calculated recommendation for ${stock.symbol} is **${p.signal}** (score ${p.score} of ±100, signal strength ${p.signalStrength}). ${p.reasons[0] ?? ""} — identical to what the Research page shows.`
+      : "";
     return {
-      text: ask
-        ? `Whether to invest in ${stock.name} depends on your horizon, risk tolerance, existing exposure and objective — not on the stock alone. Here is what to weigh:`
-        : `Here is how ${stock.name} fits into an analysis. Remember: this is a sample-data explanation, not a recommendation.`,
+      text:
+        (ask
+          ? `Whether to invest in ${stock.name} depends on your horizon, risk tolerance, existing exposure and objective — not on the stock alone. Here is what to weigh:`
+          : `Here is how ${stock.name} fits into an analysis. These are measured values from the latest available market data, not a forecast.`) +
+        signalNote,
       structured: stockStructured(stock),
     };
   }
@@ -226,7 +271,7 @@ export function advisorReply(prompt: string): AdvisorReply {
       impact: "You can connect a real AI backend later via the aiService interface without changing this screen.",
       concerns: [
         "Anything here is educational, not financial advice",
-        "Sample data is illustrative, not live market data",
+        "Market data is latest-available and may be delayed — it is not a live feed",
         "Verify any rule change (e.g. tax) against official sources",
       ],
       learn: "Browse the Learn section for structured lessons on any of these topics.",
@@ -256,12 +301,16 @@ export function stockQa(s: Stock, question: string): StockQa {
 
   if (q.includes("risky") || q.includes("risk")) {
     const reasons: string[] = [];
-    if (s.beta >= 1.3) reasons.push(`higher historical volatility (beta ${s.beta.toFixed(2)})`);
+    if (s.beta != null && s.beta >= 1.3)
+      reasons.push(`higher historical volatility (beta ${s.beta.toFixed(2)})`);
     if (s.pe && s.pe > 45) reasons.push(`elevated valuation (P/E ${s.pe.toFixed(1)}) vs its history`);
+    if (s.debtToEquity != null && s.debtToEquity > 1.5)
+      reasons.push(`higher leverage (debt-to-equity ${s.debtToEquity.toFixed(2)})`);
     reasons.push("concentration within a single sector in your portfolio");
+    const riskLabel = (s.risk ?? "Moderate").toLowerCase();
     return {
       question,
-      answer: `Three factors contribute to the current **${s.risk.toLowerCase()}** risk assessment:
+      answer: `Several factors contribute to the current **${riskLabel}** risk assessment:
 ${reasons.map((r, i) => `${i + 1}. ${r}`).join("\n")}
 
 This does not mean the stock will fall — it means the *uncertainty* around potential outcomes is higher.`,
@@ -308,47 +357,46 @@ This does not mean the stock will fall — it means the *uncertainty* around pot
   }
 
   if (q.includes("calculation") || q.includes("how is") || q.includes("show")) {
+    const beta = s.beta?.toFixed(2) ?? "n/a";
+    const volEstimate = s.beta != null ? `${(s.beta * 10 + 8).toFixed(1)}%` : "n/a";
     return {
       question,
-      answer: `A simplified calculation of the risk label for ${s.name}:
+      answer: `A simplified view of the inputs behind the risk label for ${s.name}:
 
-• **Volatility** — annualised standard deviation of daily returns (sample data): ~${(s.beta * 10 + 8).toFixed(1)}%
+• **Volatility** — annualised standard deviation of daily returns: ~${volEstimate} (estimated from beta)
 • **Valuation** — P/E ${s.pe?.toFixed(1) ?? "n/a"} vs sector ${sectorAvgPe[s.sector] ?? 25}
 • **Leverage** — Debt/Equity ${s.debtToEquity?.toFixed(2) ?? "n/a"}
-• **Market sensitivity** — Beta ${s.beta.toFixed(2)}
+• **Market sensitivity** — Beta ${beta}
 
 The risk label combines these into a Low / Moderate / High bucket. The exact weighting is transparent in the analytics layer — no hidden 'prediction' is involved.`,
-      points: ["These are illustrative calculations on sample data", "Real risk engines add correlation and drawdown inputs"],
+      points: ["Values marked n/a are not published by the data provider", "Real risk engines add correlation and drawdown inputs"],
     };
   }
 
   // Fallback
   return {
     question,
-    answer: `On **${s.name}** (${s.symbol}): the current sample assessment is based on its fundamentals — P/E ${s.pe?.toFixed(1) ?? "n/a"}, ROE ${s.roe.toFixed(1)}%, beta ${s.beta.toFixed(2)} — plus how it interacts with your existing holdings. I can go deeper on risk, valuation, portfolio fit, or the calculation behind the label.`,
+    answer: `On **${s.name}** (${s.symbol}): the current assessment is based on its fundamentals — P/E ${s.pe?.toFixed(1) ?? "n/a"}, ROE ${s.roe?.toFixed(1) ?? "n/a"}%, beta ${s.beta?.toFixed(2) ?? "n/a"} — plus how it interacts with your existing holdings. I can go deeper on risk, valuation, portfolio fit, or the calculation behind the label.`,
     points: [
       "Ask: 'Why is this risky?', 'Is the valuation reasonable?', 'How does it fit my portfolio?'",
-      "Explanations are educational and sample-based, not predictions",
+      "Explanations are educational, not predictions",
     ],
   };
 }
 
-export function compareWithPeer(s: Stock): StockQa {
-  const peer = stocks.find(
-    (x) => x.symbol !== s.symbol && x.sector === s.sector && x.country === s.country,
-  ) ?? stocks.find((x) => x.symbol !== s.symbol && x.country === s.country)!;
+export function compareWithPeer(s: Stock, peer: Stock): StockQa {
   return {
     question: `Compare ${s.symbol} with ${peer.symbol}`,
-    answer: `**${s.symbol} vs ${peer.symbol}** (both "${s.sector}", sample data):
+    answer: `**${s.symbol} vs ${peer.symbol}** (both "${s.sector}", latest available prices):
 
 | Metric | ${s.symbol} | ${peer.symbol} |
 | --- | --- | --- |
 | Price | ${s.currency === "INR" ? "₹" : "$"}${s.price.toFixed(2)} | ${peer.currency === "INR" ? "₹" : "$"}${peer.price.toFixed(2)} |
 | P/E | ${s.pe?.toFixed(1) ?? "—"} | ${peer.pe?.toFixed(1) ?? "—"} |
-| ROE | ${s.roe.toFixed(1)}% | ${peer.roe.toFixed(1)}% |
+| ROE | ${s.roe?.toFixed(1) ?? "—"}% | ${peer.roe?.toFixed(1) ?? "—"}% |
 | D/E | ${s.debtToEquity?.toFixed(2) ?? "—"} | ${peer.debtToEquity?.toFixed(2) ?? "—"} |
-| Beta | ${s.beta.toFixed(2)} | ${peer.beta.toFixed(2)} |
-| Risk | ${s.risk} | ${peer.risk} |
+| Beta | ${s.beta?.toFixed(2) ?? "—"} | ${peer.beta?.toFixed(2) ?? "—"} |
+| Risk | ${s.risk ?? "N/A"} | ${peer.risk ?? "N/A"} |
 
 The higher-risk name offers more upside potential in a strong scenario but demands more tolerance for drawdowns. Which fits your portfolio depends on what you already hold.`,
     points: [

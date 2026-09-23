@@ -65,18 +65,24 @@ function Metric({
 }
 
 export function FundamentalGrid({ stock }: { stock: Stock }) {
+  // Metrics the provider does not publish render as "N/A" — never a made-up number.
+  const na = "N/A";
+  const pct1 = (v: number | null) => (v == null ? na : `${v.toFixed(1)}%`);
+  const pct2 = (v: number | null) => (v == null ? na : `${v.toFixed(2)}%`);
+  const dec2 = (v: number | null) => (v == null ? na : num2(v));
+
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-      <Metric label="Market Cap" value={marketCapLabel(stock.marketCap, stock.currency)} explain={FUND.marketCap.explain} highlight />
-      <Metric label="Revenue" value={inrCompact(stock.revenue)} explain={FUND.revenue.explain} />
-      <Metric label="Net Profit" value={inrCompact(stock.netProfit)} explain={FUND.netProfit.explain} />
-      <Metric label="EPS" value={num2(stock.eps)} explain={FUND.eps.explain} />
-      <Metric label="P/E" value={stock.pe ? num2(stock.pe) : "—"} explain={FUND.pe.explain} highlight />
-      <Metric label="P/B" value={num2(stock.pb)} explain={FUND.pb.explain} />
-      <Metric label="ROE" value={`${stock.roe.toFixed(1)}%`} explain={FUND.roe.explain} />
-      <Metric label="ROCE" value={stock.roce ? `${stock.roce.toFixed(1)}%` : "—"} explain={FUND.roce.explain} />
-      <Metric label="D/E" value={stock.debtToEquity ? num2(stock.debtToEquity) : "—"} explain={FUND.de.explain} />
-      <Metric label="Dividend Yield" value={`${stock.dividendYield.toFixed(2)}%`} explain={FUND.dividendYield.explain} />
+      <Metric label="Market Cap" value={stock.marketCap != null ? marketCapLabel(stock.marketCap, stock.currency) : na} explain={FUND.marketCap.explain} highlight />
+      <Metric label="Revenue" value={stock.revenue != null ? inrCompact(stock.revenue) : na} explain={FUND.revenue.explain} />
+      <Metric label="Net Profit" value={stock.netProfit != null ? inrCompact(stock.netProfit) : na} explain={FUND.netProfit.explain} />
+      <Metric label="EPS" value={dec2(stock.eps)} explain={FUND.eps.explain} />
+      <Metric label="P/E" value={dec2(stock.pe)} explain={FUND.pe.explain} highlight />
+      <Metric label="P/B" value={dec2(stock.pb)} explain={FUND.pb.explain} />
+      <Metric label="ROE" value={pct1(stock.roe)} explain={FUND.roe.explain} />
+      <Metric label="ROCE" value={pct1(stock.roce)} explain={FUND.roce.explain} />
+      <Metric label="D/E" value={dec2(stock.debtToEquity)} explain={FUND.de.explain} />
+      <Metric label="Dividend Yield" value={pct2(stock.dividendYield)} explain={FUND.dividendYield.explain} />
     </div>
   );
 }

@@ -16,8 +16,18 @@ export interface IndexQuote {
   spark: number[];
   currency: Currency;
   market: "INDIA" | "GLOBAL";
+  /** ISO timestamp of the latest available bar/quote, when supplied. */
+  timestamp?: string;
+  /** Data provider name (e.g. "Yahoo Finance"). */
+  source?: string;
 }
 
+/**
+ * A tracked stock.
+ *
+ * `null` on any fundamental/risk field means the data provider does not
+ * expose it — the UI must render "N/A", never an invented number.
+ */
 export interface Stock {
   symbol: string;
   name: string;
@@ -28,22 +38,54 @@ export interface Stock {
   price: number;
   change: number;
   changePct: number;
-  marketCap: number;
+  marketCap: number | null;
   pe: number | null;
-  pb: number;
-  roe: number;
+  pb: number | null;
+  roe: number | null;
   roce: number | null;
   debtToEquity: number | null;
-  dividendYield: number;
-  eps: number;
-  revenue: number;
-  netProfit: number;
+  dividendYield: number | null;
+  eps: number | null;
+  revenue: number | null;
+  netProfit: number | null;
   week52High: number;
   week52Low: number;
-  risk: RiskLevel;
-  beta: number;
+  risk: RiskLevel | null;
+  beta: number | null;
   insight: string;
   summary: string;
+  /** ISO timestamp of the latest available market data. */
+  timestamp?: string;
+  /** Data provider name. */
+  source?: string;
+}
+
+/** BUY/HOLD/SELL output of the backend recommendation model. */
+export interface StockPrediction {
+  signal: "BUY" | "HOLD" | "SELL";
+  /** Weighted feature score in [-100, +100]. */
+  score: number;
+  /** |score| — a heuristic strength, NOT a calibrated probability. */
+  signalStrength: number;
+  /** Reasons generated from the actual indicator/fundamental values. */
+  reasons: string[];
+  model: string;
+  generatedAt: string;
+}
+
+/** Full analysis payload from GET /api/stocks/{symbol}. */
+export interface StockAnalysis extends Stock {
+  technical: Technicals;
+  prediction: StockPrediction;
+}
+
+/** Market breadth; `available: false` means the provider cannot supply it. */
+export interface MarketBreadth {
+  advances: number | null;
+  declines: number | null;
+  unchanged: number | null;
+  available: boolean;
+  note?: string;
 }
 
 export type TimeRange = "1D" | "1W" | "1M" | "6M" | "1Y" | "5Y";
@@ -60,6 +102,13 @@ export interface Technicals {
   ma200: number;
   sma20Above50: boolean;
   volumeAvg: number;
+  /* Extra backend-computed values (used by the Advisor; always from real OHLCV) */
+  ema20?: number;
+  volatility?: number;   // annualised % of daily returns
+  volume?: number;       // latest bar volume
+  volumeTrend?: number;  // 5-bar avg / 20-bar avg
+  latestReturn?: number; // last 1-day return, %
+  return20d?: number;    // 20-session return, %
 }
 
 /* ---------------------------- Portfolio ---------------------------- */
@@ -81,13 +130,17 @@ export interface Holding {
   name: string;
   qty: number;
   avgCost: number;
-  ltp: number;
-  dayChange: number;
-  dayChangePct: number;
+  /** Latest available price — null when the quote could not be fetched. */
+  ltp: number | null;
+  dayChange: number | null;
+  dayChangePct: number | null;
   invested: number;
-  value: number;
-  returnPct: number;
+  /** qty × ltp — null when the quote could not be fetched. */
+  value: number | null;
+  returnPct: number | null;
   weightPct: number;
+  /** false when the provider returned no price for this holding. */
+  available: boolean;
 }
 
 export interface AllocationSlice {

@@ -32,9 +32,9 @@ export default function PortfolioPage() {
         {loadingSummary || !summary
           ? Array.from({ length: 4 }).map((_, i) => <div key={i} className="card h-24 animate-pulse" />)
           : [
-              { label: "Total Value", value: inr(summary.totalValue), explain: "Current market value of all holdings, including cash, gold and debt allocations." },
-              { label: "Invested", value: inr(summary.invested), explain: "Total money deployed into investments." },
-              { label: "Overall Return", value: `+${summary.overallReturnPct.toFixed(1)}%`, tone: "text-pos", explain: "Total gain versus total invested, in percentage terms." },
+              { label: "Total Value", value: inr(summary.totalValue), explain: "Current market value of your holdings at latest available prices, plus available cash." },
+              { label: "Invested", value: inr(summary.invested), explain: "Total cost basis of the shares you hold (quantity × average buy price)." },
+              { label: "Overall Return", value: `${summary.overallReturnPct >= 0 ? "+" : ""}${summary.overallReturnPct.toFixed(1)}%`, tone: summary.overallReturnPct >= 0 ? "text-pos" : "text-neg", explain: "Unrealised gain or loss versus total invested, in percentage terms." },
               { label: "Available Cash", value: inr(summary.availableCash), explain: "Cash available for deployment or as a buffer." },
             ].map((s) => (
               <div key={s.label} className="card p-4">
@@ -58,7 +58,7 @@ export default function PortfolioPage() {
         <Card className="p-5 xl:col-span-2">
           <CardHeader
             title="Holdings"
-            subtitle="Click a holding to open its research page"
+            subtitle="Priced at latest available market prices · click a holding to open its research page"
             right={
               <span className="chip">{holdings?.length ?? "—"} positions</span>
             }
@@ -92,10 +92,19 @@ export default function PortfolioPage() {
                       </td>
                       <td className="px-2 py-3 text-right tnum text-secondary">{h.qty}</td>
                       <td className="px-2 py-3 text-right tnum text-secondary">{inr(h.avgCost)}</td>
-                      <td className="px-2 py-3 text-right font-semibold tnum text-ink">{inr(h.ltp)}</td>
-                      <td className="px-2 py-3 text-right font-semibold tnum text-ink">{inr(h.value)}</td>
-                      <td className={cn("px-2 py-3 text-right font-semibold tnum", h.returnPct >= 0 ? "text-pos" : "text-neg")}>
-                        {pct(h.returnPct)}
+                      <td className="px-2 py-3 text-right font-semibold tnum text-ink">
+                        {h.ltp != null ? inr(h.ltp) : "N/A"}
+                      </td>
+                      <td className="px-2 py-3 text-right font-semibold tnum text-ink">
+                        {h.value != null ? inr(h.value) : "N/A"}
+                      </td>
+                      <td
+                        className={cn(
+                          "px-2 py-3 text-right font-semibold tnum",
+                          h.returnPct == null ? "text-muted" : h.returnPct >= 0 ? "text-pos" : "text-neg",
+                        )}
+                      >
+                        {h.returnPct != null ? pct(h.returnPct) : "N/A"}
                       </td>
                       <td className="px-2 py-3 text-right tnum text-secondary">{h.weightPct.toFixed(1)}%</td>
                     </tr>
@@ -113,7 +122,7 @@ export default function PortfolioPage() {
       {/* Transactions + goals */}
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="p-5 lg:col-span-2">
-          <CardHeader title="Recent Transactions" subtitle="Sample activity log" />
+          <CardHeader title="Recent Transactions" subtitle="Demo activity log (no broker integration at this stage)" />
           {loadingTx || !transactions ? (
             <div className="mt-4">
               <SkeletonRows rows={5} />

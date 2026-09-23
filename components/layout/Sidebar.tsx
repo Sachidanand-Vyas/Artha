@@ -103,12 +103,13 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-gold opacity-60" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-gold" />
             </span>
-            Demo mode
+            Latest data
           </span>
           <span className="text-[10px] text-muted">v0.1</span>
         </div>
         <p className="text-[10.5px] leading-relaxed text-muted">
-          Educational insights on sample data. Not financial advice.
+          Market data: Yahoo Finance via FastAPI (latest available, may be delayed). Educational — not financial
+          advice.
         </p>
       </div>
     </div>

@@ -12,17 +12,21 @@ export function PortfolioAnalyzer() {
   const { data: holdings, loading } = useAsync(() => portfolioService.getHoldings(), []);
 
   const result = useMemo(() => {
-    if (!holdings?.length) return null;
-    const total = holdings.reduce((a, h) => a + h.value, 0);
-    const weights = holdings.map((h) => h.value / total);
+    // Only holdings we could price at real market prices feed the maths.
+    const priced = (holdings ?? []).filter((h) => h.value != null);
+    if (!priced.length) return null;
+    const val = (h: { value: number | null }) => h.value ?? 0;
+    const total = priced.reduce((a, h) => a + val(h), 0);
+    if (total <= 0) return null;
+    const weights = priced.map((h) => val(h) / total);
     const hhi = weights.reduce((a, w) => a + w * w, 0);
     const effective = 1 / hhi;
     const maxWeight = Math.max(...weights) * 100;
-    const top3 = [...holdings].sort((a, b) => b.value - a.value).slice(0, 3);
-    // Rough sector concentration from the known sample sectors
-    const sectorShare = holdings
+    const top3 = [...priced].sort((a, b) => val(b) - val(a)).slice(0, 3);
+    // Rough sector concentration from the known IT-services names
+    const sectorShare = priced
       .filter((h) => ["TCS", "INFY", "WIPRO"].includes(h.symbol))
-      .reduce((a, h) => a + (h.value / total) * 100, 0);
+      .reduce((a, h) => a + (val(h) / total) * 100, 0);
     return { hhi, effective, maxWeight, top3, sectorShare };
   }, [holdings]);
 
@@ -39,7 +43,7 @@ export function PortfolioAnalyzer() {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card className="p-5">
-        <CardHeader title="Concentration Analysis" subtitle="Computed from your actual sample holdings" />
+        <CardHeader title="Concentration Analysis" subtitle="Computed from your holdings at latest available prices" />
         <div className="mt-4">
           <ResultRow
             label="Herfindahl–Hirschman Index (HHI)"

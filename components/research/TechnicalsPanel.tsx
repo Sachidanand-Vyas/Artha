@@ -6,6 +6,12 @@ import type { Technicals } from "@/lib/types";
 import { InfoTooltip } from "@/components/ui/Tooltip";
 import { StatusPill } from "@/components/ui/Badge";
 
+/** 12,34,567 → 1.2Cr / 24,500,000 → 24.5M — one formatter for any currency's volume. */
+const compact = new Intl.NumberFormat("en-IN", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
 function RsiGauge({ rsi }: { rsi: number }) {
   const zone = rsi >= 70 ? "Overbought" : rsi <= 30 ? "Oversold" : "Neutral";
   const color = rsi >= 70 ? "var(--neg)" : rsi <= 30 ? "var(--pos)" : "var(--gold)";
@@ -101,11 +107,11 @@ export function TechnicalsPanel({ t }: { t: Technicals }) {
         <span className={cn("h-2 w-2 shrink-0 rounded-full", t.sma20Above50 ? "bg-pos" : "bg-neg")} />
         <InfoTooltip
           label={<span className="text-xs font-medium">20-day vs 50-day MA</span>}
-          text={t.sma20Above50 ? "Short-term average is above the longer-term average — the sample series is in a short-term uptrend." : "Short-term average is below the longer-term average — the sample series is in a short-term downtrend."}
+          text={t.sma20Above50 ? "Short-term average is above the longer-term average — this price series is in a short-term uptrend." : "Short-term average is below the longer-term average — this price series is in a short-term downtrend."}
         />
         <span className="ml-auto text-xs tnum text-secondary">
           {t.sma20Above50 ? "Bullish alignment" : "Bearish alignment"} · avg volume{" "}
-          {Math.round(t.volumeAvg / 1e5) / 10}L
+          {compact.format(t.volumeAvg)}
         </span>
       </div>
     </div>
