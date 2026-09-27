@@ -8,7 +8,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { InfoTooltip } from "@/components/ui/Tooltip";
 import { EmptyState, ErrorState, SkeletonRows } from "@/components/ui/States";
 
-const COLORS = ["#d4a94f", "#5b8def", "#16c784", "#8b7cf6", "#3ec5c5"];
+const COLORS = ["var(--gold)", "var(--chart-1)", "var(--chart-3)", "var(--chart-5)", "var(--chart-6)"];
 
 /** A missing portfolio is an empty state, not an error. */
 const orEmpty = async <T,>(promise: Promise<T>, empty: T): Promise<T> => {
@@ -83,11 +83,11 @@ export function AssetAllocation() {
                 <Tooltip
                   formatter={(value, name) => [inrCompact(Number(value)), String(name)]}
                   contentStyle={{
-                    background: "#182130",
-                    border: "1px solid rgba(150,168,196,0.22)",
+                    background: "var(--surface-3)",
+                    border: "1px solid var(--edge-strong)",
                     borderRadius: 12,
                     fontSize: 12,
-                    color: "#e8eef6",
+                    color: "var(--text-1)",
                   }}
                 />
               </PieChart>

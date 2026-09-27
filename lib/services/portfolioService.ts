@@ -50,6 +50,7 @@ interface ApiHolding {
   day_change: number | null;
   day_change_percent: number | null;
   value: number | null;
+  unrealized_pnl: number | null;
   return_percent: number | null;
   weight_percent: number;
   available: boolean;
@@ -69,6 +70,10 @@ interface ApiPortfolio {
     unrealized_pnl: number;
     return_percent: number;
   };
+  capital_base: number;
+  total_pnl: number;
+  total_return_pct: number;
+  realized_pnl: number;
   timestamp: string;
   source: string;
 }
@@ -118,6 +123,7 @@ function mapHolding(h: ApiHolding): Holding {
     dayChangePct: h.available ? h.day_change_percent : null,
     invested: h.invested,
     value: h.available ? h.value : null,
+    pnl: h.available ? h.unrealized_pnl : null,
     returnPct: h.available ? h.return_percent : null,
     weightPct: h.weight_percent,
     available: h.available,
@@ -138,9 +144,15 @@ function mapSummary(p: ApiPortfolio): PortfolioSummary {
     availableCash: cash,
     todayChange: t.day_change,
     todayChangePct,
-    overallReturn: t.unrealized_pnl,
-    overallReturnPct: t.return_percent,
+    /* Four distinct P&L metrics — straight from the backend, never mixed. */
+    totalPnl: p.total_pnl,
+    totalReturnPct: p.total_return_pct,
+    unrealizedPnl: t.unrealized_pnl,
+    unrealizedReturnPct: t.return_percent,
+    realizedPnl: p.realized_pnl,
+    capitalBase: p.capital_base,
     allPriced: p.holdings.every((h) => h.available),
+    pricesAt: p.timestamp || null,
   };
 }
 

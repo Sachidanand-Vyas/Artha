@@ -115,14 +115,26 @@ export interface Technicals {
 
 export interface PortfolioSummary {
   totalValue: number;
+  /** Cost basis of the currently-held, priceable shares. */
   invested: number;
   availableCash: number;
   todayChange: number;
   todayChangePct: number;
-  overallReturn: number;
-  overallReturnPct: number;
+  /* --- Four DISTINCT P&L metrics — never interchanged --- */
+  /** totalValue − capitalBase (all capital you added: ₹1,00,000 virtual + imports). */
+  totalPnl: number;
+  totalReturnPct: number;
+  /** Open gain/loss on positions you still hold: market value − cost basis. */
+  unrealizedPnl: number;
+  unrealizedReturnPct: number;
+  /** Closed positions: proceeds − average cost, replayed from transactions. */
+  realizedPnl: number;
+  /** Initial virtual capital + manually imported cost basis. */
+  capitalBase: number;
   /** False when at least one holding could not be priced right now. */
   allPriced: boolean;
+  /** ISO time of the quotes used for this valuation (null when none). */
+  pricesAt: string | null;
 }
 
 /** One point of the real cost-basis history derived from transactions. */
@@ -145,6 +157,8 @@ export interface Holding {
   invested: number;
   /** qty × ltp — null when the quote could not be fetched. */
   value: number | null;
+  /** Unrealized P&L in rupees: value − invested (null when unpriced). */
+  pnl: number | null;
   returnPct: number | null;
   weightPct: number;
   /** false when the provider returned no price for this holding. */
@@ -212,19 +226,28 @@ export interface AiInsight {
 /* ------------------------------- News ------------------------------- */
 
 export type NewsCategory = "Market" | "Company" | "Economy" | "Global";
-export type Sentiment = "Positive" | "Neutral" | "Negative";
 
+/**
+ * One REAL headline aggregated by the backend (GET /api/news) from trusted
+ * publishers' official RSS feeds. There is no mock variant of this type:
+ * when providers fail, the request errors instead of returning articles.
+ */
 export interface NewsArticle {
   id: string;
-  headline: string;
+  title: string;
+  /** Publisher name (e.g. "Economic Times") — always rendered on the card. */
   source: string;
+  /** ORIGINAL article URL — "Read full article" opens this. */
+  url: string;
+  /** Epoch ms of the publisher's publication time (from the feed). */
   publishedAt: number;
   category: NewsCategory;
-  sentiment: Sentiment;
-  sentimentScore: number; // -1..1
-  aiSummary: string;
-  related: string[];
-  featured?: boolean;
+  /** Publisher-provided excerpt; empty string when the feed gives none. */
+  description: string;
+  /** Feed-provided image when legitimately present (may be null). */
+  image?: string | null;
+  /** Best-effort association with tracked symbols (may be empty). */
+  tickers?: string[];
 }
 
 /* ------------------------------ Learning ---------------------------- */

@@ -78,7 +78,8 @@ export function useAuthGuard() {
   useEffect(() => {
     if (!hydrated || !validated) return;
     if (!token) {
-      if (!isPublic) router.replace("/login");
+      // TEMP: /dev-e2e exempt while the verification harness exists.
+      if (!isPublic && pathname !== "/dev-e2e") router.replace("/login");
       return;
     }
     // Logged in:

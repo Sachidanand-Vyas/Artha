@@ -89,13 +89,13 @@ export function MonteCarloSim() {
               <div className="mt-3 h-56">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={histogram} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(150,168,196,0.06)" vertical={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
                     <XAxis dataKey="label" tick={{ fill: "var(--text-3)", fontSize: 9 }} axisLine={false} tickLine={false} interval={3} />
                     <YAxis hide />
                     <Tooltip
                       formatter={(value) => [`${value} paths`, "Outcomes"]}
                       labelFormatter={(l) => `~${l}`}
-                      contentStyle={{ background: "#182130", border: "1px solid rgba(150,168,196,0.22)", borderRadius: 12, fontSize: 12, color: "#e8eef6" }}
+                      contentStyle={{ background: "var(--surface-3)", border: "1px solid var(--edge-strong)", borderRadius: 12, fontSize: 12, color: "var(--text-1)" }}
                     />
                     <Bar dataKey="count" radius={[2, 2, 0, 0]}>
                       {histogram.map((h, i) => (

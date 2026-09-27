@@ -152,7 +152,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     gist: "Prices move where buyers and sellers disagree on future earnings, interest rates, news and sentiment.",
     contrast: "Price movement reflects changing expectations",
     answer:
-      "A price is where a buyer and seller agree *right now*. It moves when expectations change:\n\n1. **Earnings** — results, guidance, order wins or losses\n2. **Interest rates** — higher rates discount future profits more heavily\n3. **Sector/news flow** — regulation, crude prices, currency, competitor moves\n4. **Sentiment & flows** — fund flows, FII/DII positioning, momentum trading\n5. **Valuation rotation** — money moving between expensive and cheap pockets\n\nA single day's move is mostly flow and sentiment; the multi-year trend is mostly earnings. Artha shows you the measured move and the indicators — it does not have a news feed, so it cannot name the day's specific catalyst.",
+      "A price is where a buyer and seller agree *right now*. It moves when expectations change:\n\n1. **Earnings** — results, guidance, order wins or losses\n2. **Interest rates** — higher rates discount future profits more heavily\n3. **Sector/news flow** — regulation, crude prices, currency, competitor moves\n4. **Sentiment & flows** — fund flows, FII/DII positioning, momentum trading\n5. **Valuation rotation** — money moving between expensive and cheap pockets\n\nA single day's move is mostly flow and sentiment; the multi-year trend is mostly earnings. Artha shows you the measured move and the indicators — this chat does not quote news (see the News page for today's headlines), so it cannot name the day's specific catalyst.",
   },
   {
     id: "analyze-stock",

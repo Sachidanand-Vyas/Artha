@@ -192,18 +192,41 @@ function PortfolioPageInner() {
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {[
           { label: "Total Value", value: inr(s.totalValue), explain: "Current market value of your holdings at latest available prices, plus available cash." },
-          { label: "Invested", value: inr(s.invested), explain: "Total cost basis of the shares you hold (quantity × average buy price)." },
           {
-            label: "Overall Return",
-            value: `${s.overallReturnPct >= 0 ? "+" : ""}${s.overallReturnPct.toFixed(1)}%`,
-            tone: s.overallReturnPct >= 0 ? "text-pos" : "text-neg",
-            explain: "Unrealised gain or loss versus total invested, in percentage terms.",
+            label: "Invested / Cost Basis",
+            value: inr(s.invested),
+            sub: (
+              <>
+                Unrealized P&amp;L:{" "}
+                <span className={s.unrealizedPnl > 0 ? "text-pos" : s.unrealizedPnl < 0 ? "text-neg" : "text-ink"}>
+                  {s.unrealizedPnl > 0 ? "+" : ""}
+                  {inr(s.unrealizedPnl)} ({pct(s.unrealizedReturnPct)})
+                </span>
+              </>
+            ),
+            explain: "Total cost basis of the shares you hold (quantity × average buy price); unrealized P&L compares it to today's market value.",
+          },
+          {
+            label: "Total P&L",
+            value: `${s.totalPnl > 0 ? "+" : ""}${inr(s.totalPnl)} (${pct(s.totalReturnPct)})`,
+            tone: s.totalPnl > 0 ? "text-pos" : s.totalPnl < 0 ? "text-neg" : "text-ink",
+            sub: (
+              <>
+                Realized P&amp;L:{" "}
+                <span className={s.realizedPnl > 0 ? "text-pos" : s.realizedPnl < 0 ? "text-neg" : "text-ink"}>
+                  {s.realizedPnl > 0 ? "+" : ""}
+                  {inr(s.realizedPnl)}
+                </span>
+              </>
+            ),
+            explain: "Portfolio value minus all capital you've added (starting virtual cash + imported holdings) — realized plus unrealized.",
           },
           { label: "Available Cash", value: inr(s.availableCash), explain: "Virtual cash available for deployment or as a buffer." },
         ].map((stat) => (
           <div key={stat.label} className="card p-4" title={stat.explain}>
             <p className="text-[11px] font-medium text-muted">{stat.label}</p>
             <p className={cn("mt-1 text-lg font-bold tnum", stat.tone ?? "text-ink")}>{stat.value}</p>
+            {stat.sub ? <p className="mt-0.5 text-[11px] tnum text-muted">{stat.sub}</p> : null}
             <p className="mt-0.5 text-[10.5px] leading-snug text-muted">{stat.explain}</p>
           </div>
         ))}
@@ -261,7 +284,7 @@ function PortfolioPageInner() {
             </div>
           ) : (
             <div className="mt-2 overflow-x-auto">
-              <table className="w-full min-w-[680px] text-sm">
+              <table className="w-full min-w-[760px] text-sm">
                 <thead>
                   <tr className="border-b border-edge text-left text-[11px] font-semibold uppercase tracking-wider text-muted">
                     <th className="px-2 py-2.5">Asset</th>
@@ -269,6 +292,7 @@ function PortfolioPageInner() {
                     <th className="px-2 py-2.5 text-right">Avg Cost</th>
                     <th className="px-2 py-2.5 text-right">LTP</th>
                     <th className="px-2 py-2.5 text-right">Value</th>
+                    <th className="px-2 py-2.5 text-right">P&amp;L</th>
                     <th className="px-2 py-2.5 text-right">Return</th>
                     <th className="px-2 py-2.5 text-right">Weight</th>
                     <th className="px-2 py-2.5 text-right">Trade</th>
@@ -290,6 +314,20 @@ function PortfolioPageInner() {
                       </td>
                       <td className="px-2 py-3 text-right font-semibold tnum text-ink">
                         {h.value != null ? inr(h.value) : "N/A"}
+                      </td>
+                      <td
+                        className={cn(
+                          "px-2 py-3 text-right font-semibold tnum",
+                          h.pnl == null
+                            ? "text-muted"
+                            : h.pnl > 0
+                              ? "text-pos"
+                              : h.pnl < 0
+                                ? "text-neg"
+                                : "text-ink",
+                        )}
+                      >
+                        {h.pnl != null ? `${h.pnl > 0 ? "+" : ""}${inr(h.pnl)}` : "N/A"}
                       </td>
                       <td
                         className={cn(

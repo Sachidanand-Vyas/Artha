@@ -76,9 +76,15 @@ export function currencyOf(c: "INR" | "USD"): (n: number) => string {
   return c === "INR" ? inr : usd;
 }
 
-/** Signed percent: +2.35% / -1.20% */
+/**
+ * Signed percent: +2.35% / -1.20%
+ * Always ≥2 decimal places, and a non-zero value never collapses into a
+ * misleading "0.00%" (sub-0.005% returns get 4 decimals instead).
+ */
 export function pct(n: number, digits = 2): string {
-  return `${n >= 0 ? "+" : ""}${n.toFixed(digits)}%`;
+  const abs = Math.abs(n);
+  const d = digits === 2 && abs > 0 && abs < 0.005 ? 4 : digits;
+  return `${n >= 0 ? "+" : ""}${n.toFixed(d)}%`;
 }
 
 /** Signed number: +1,234 / -456 */

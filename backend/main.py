@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from db import init_db
 from models.schemas import AdvisorAskIn, CalcIn, CalcResult, Candle, HoldingIn, StockAnalysis
 from routes_account import router as account_router
+from routes_news import router as news_router
 from services import llm
 from services import market_data as md
 from services.calculations import calculate
@@ -66,6 +67,10 @@ app.add_middleware(
 # Accounts, onboarding preferences and the virtual (paper-trading) portfolio.
 # User data lives in the local SQLite file — see db.py / routes_account.py.
 app.include_router(account_router)
+
+# Real news: aggregated from trusted publishers' official RSS feeds
+# (see services/news.py). The frontend never hardcodes articles.
+app.include_router(news_router)
 init_db()
 
 

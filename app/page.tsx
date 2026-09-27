@@ -56,8 +56,9 @@ export default function DashboardPage() {
 
       <p className="flex items-center gap-1.5 pt-2 text-[11px] text-muted">
         <ArrowUpRight size={12} />
-        Market data: latest available prices via the Artha backend (may be delayed, not live). News and learning
-        content is clearly-labelled demo material. Educational — not financial advice.
+        Market data: latest available prices via the Artha backend (may be delayed, not live). News: live
+        headlines from publisher RSS feeds (Economic Times, Mint, Business Standard). Learning content is
+        clearly-labelled demo material. Educational — not financial advice.
       </p>
     </div>
   );

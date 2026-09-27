@@ -12,6 +12,15 @@ import {
 } from "lightweight-charts";
 import type { TimeRange } from "@/lib/types";
 import type { GeneratedCandle } from "@/lib/utils";
+import { useTheme } from "@/lib/theme";
+
+/** Canvas cannot resolve CSS var() strings — turn a hex token into rgba(). */
+function rgba(hex: string, alpha: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return hex; // already rgba()/unknown format — use as-is
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
 
 export function StockPriceChart({
   candles,
@@ -26,42 +35,56 @@ export function StockPriceChart({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  // Canvas colors are captured at mount — re-create the chart on theme change.
+  const theme = useTheme();
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
+    // Resolve design tokens to concrete colors for the ACTIVE theme.
+    // Dark values equal the previously hardcoded colors, so dark is unchanged.
+    const css = getComputedStyle(document.documentElement);
+    const v = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
+    const gold = v("--gold", "#d4a94f");
+    const pos = v("--pos", "#16c784");
+    const neg = v("--neg", "#ef4e63");
+    const chart1 = v("--chart-1", "#5b8def");
+    const grid = v("--chart-grid", "rgba(150,168,196,0.07)");
+    const edge = v("--edge", "rgba(150,168,196,0.12)");
+    const text3 = v("--text-3", "#5f6d80");
+
     const chart = createChart(el, {
       autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#5f6d80",
+        textColor: text3,
         fontFamily: "'Geist', system-ui, sans-serif",
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: "rgba(150,168,196,0.05)" },
-        horzLines: { color: "rgba(150,168,196,0.05)" },
+        vertLines: { color: grid },
+        horzLines: { color: grid },
       },
-      rightPriceScale: { borderColor: "rgba(150,168,196,0.12)" },
+      rightPriceScale: { borderColor: edge },
       timeScale: {
-        borderColor: "rgba(150,168,196,0.12)",
+        borderColor: edge,
         timeVisible: range === "1D" || range === "1W",
         secondsVisible: false,
       },
       crosshair: {
-        vertLine: { color: "rgba(212,169,79,0.4)", labelBackgroundColor: "#d4a94f" },
-        horzLine: { color: "rgba(212,169,79,0.4)", labelBackgroundColor: "#d4a94f" },
+        vertLine: { color: rgba(gold, 0.4), labelBackgroundColor: gold },
+        horzLine: { color: rgba(gold, 0.4), labelBackgroundColor: gold },
       },
     });
     chartRef.current = chart;
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#16c784",
-      downColor: "#ef4e63",
+      upColor: pos,
+      downColor: neg,
       borderVisible: false,
-      wickUpColor: "#16c784",
-      wickDownColor: "#ef4e63",
+      wickUpColor: pos,
+      wickDownColor: neg,
     });
     candleSeries.setData(
       candles.map((c) => ({
@@ -86,7 +109,7 @@ export function StockPriceChart({
       candles.map((c) => ({
         time: c.time as UTCTimestamp,
         value: c.volume,
-        color: c.close >= c.open ? "rgba(22,199,132,0.32)" : "rgba(239,78,99,0.32)",
+        color: c.close >= c.open ? rgba(pos, 0.32) : rgba(neg, 0.32),
       })),
     );
 
@@ -104,14 +127,14 @@ export function StockPriceChart({
         return out;
       };
       const ma20 = chart.addSeries(LineSeries, {
-        color: "#5b8def",
+        color: chart1,
         lineWidth: 1,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false,
       });
       const ma50 = chart.addSeries(LineSeries, {
-        color: "#d4a94f",
+        color: gold,
         lineWidth: 1,
         priceLineVisible: false,
         lastValueVisible: false,
@@ -127,7 +150,7 @@ export function StockPriceChart({
       chart.remove();
       chartRef.current = null;
     };
-  }, [candles, range, showMAs]);
+  }, [candles, range, showMAs, theme]);
 
   return <div ref={containerRef} style={{ height, width: "100%" }} />;
 }

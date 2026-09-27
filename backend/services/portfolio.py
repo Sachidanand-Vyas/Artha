@@ -51,9 +51,10 @@ def value_portfolio(holdings: list[HoldingIn]) -> PortfolioValuation:
                         currency="INR",
                         qty=h.qty,
                         avg_cost=h.avg_cost,
-                        invested=round(invested, 2),
-                        available=False,
-                    )
+                    invested=round(invested, 2),
+                    unrealized_pnl=None,  # unpriced -> P&L unknown, never estimated
+                    available=False,
+                )
                 )
                 continue
 
@@ -78,6 +79,7 @@ def value_portfolio(holdings: list[HoldingIn]) -> PortfolioValuation:
                     day_change=round(h.qty * change, 2),
                     day_change_percent=round(change_pct, 3),
                     value=round(value, 2),
+                    unrealized_pnl=round(value - invested, 2),
                     return_percent=round((value - invested) / invested * 100.0, 2)
                     if invested
                     else 0.0,

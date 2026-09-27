@@ -172,6 +172,7 @@ class HoldingValuation(BaseModel):
     day_change: Optional[float] = None     # rupee change vs previous close (per holding)
     day_change_percent: Optional[float] = None
     value: Optional[float] = None          # qty * ltp
+    unrealized_pnl: Optional[float] = None  # value - invested (cost basis); null when unpriced
     return_percent: Optional[float] = None
     weight_percent: float = 0.0            # share of total valued equity
     available: bool = True                 # false when quote could not be fetched

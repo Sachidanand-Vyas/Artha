@@ -597,7 +597,7 @@ function renderStock(plan: AdvisorPlan): string {
         }`,
         `• 20-session return: ${pctOrNull(ret20)}`,
         "",
-        `Artha has **no news feed connected**, so I can't name a specific headline or event — this is what the price, momentum and volume data show. The backend's calculated signal on these same features is **${p.signal}** (score ${p.score}): ${p.reasons[0] ?? ""}`,
+        `I don't quote headlines in chat — today's stories live on the **News** page — so I can't name a specific event; this is what the price, momentum and volume data show. The backend's calculated signal on these same features is **${p.signal}** (score ${p.score}): ${p.reasons[0] ?? ""}`,
         "",
         "_Price moves reflect changing expectations (earnings, rates, sector news, flows). The measured move is factual; the cause usually needs a news source._",
       ].join("\n");
@@ -663,7 +663,7 @@ function renderMarket(plan: AdvisorPlan): string {
       `• Weakest: ${weak.map((s) => `${s.sector} ${pct(s.changePct)}`).join(" · ")}`,
       `• Strongest: ${strong.map((s) => `${s.sector} ${pct(s.changePct)}`).join(" · ")}`,
       "",
-      "Artha has no news feed, so I can't name the day's catalyst — the sector split above shows where the move actually was.",
+      "For today's catalysts see the News page — the sector split above shows where the move actually was.",
     );
   }
 
@@ -678,7 +678,7 @@ function renderPortfolio(plan: AdvisorPlan): string {
   const { summary, sectors, holdings } = plan.portfolio!;
   const valued = holdings.filter((h) => h.available && h.value != null);
   const head = [
-    `**Portfolio value: ${inr(Math.round(summary.totalValue))}** · invested ${inr(Math.round(summary.invested))} · overall ${pct(summary.overallReturnPct)} · today ${signed(Math.round(summary.todayChange))} (${pct(summary.todayChangePct)})`,
+    `**Portfolio value: ${inr(Math.round(summary.totalValue))}** · invested ${inr(Math.round(summary.invested))} · total ${pct(summary.totalReturnPct)} · today ${signed(Math.round(summary.todayChange))} (${pct(summary.todayChangePct)})`,
     `Cash ${inr(Math.round(summary.availableCash))} · ${holdings.length} positions (${valued.length} priced)`,
   ];
 
@@ -732,7 +732,7 @@ function renderPortfolio(plan: AdvisorPlan): string {
         : "**What drove it today** (qty × day change):",
       ...top.map((c) => `• ${c.symbol} ${signed(Math.round(c.dc))} (${pct(c.p)} )`.replace(" )", ")")),
       "",
-      `Overall day change ${signed(Math.round(summary.todayChange))} (${pct(summary.todayChangePct)}); against your cost basis the portfolio is at ${pct(summary.overallReturnPct)}.`,
+      `Overall day change ${signed(Math.round(summary.todayChange))} (${pct(summary.todayChangePct)}); against your cost basis the portfolio is at ${pct(summary.unrealizedReturnPct)} (unrealized).`,
       "",
       "_Daily moves reflect market-wide and sector moves; Artha has no news feed to name a specific cause._",
     ].join("\n");
@@ -852,7 +852,10 @@ export function buildLlmContext(plan: AdvisorPlan): Record<string, unknown> | nu
       portfolio: {
         totalValue: summary.totalValue,
         invested: summary.invested,
-        overallReturnPct: summary.overallReturnPct,
+        totalReturnPct: summary.totalReturnPct,
+        unrealizedReturnPct: summary.unrealizedReturnPct,
+        realizedPnl: summary.realizedPnl,
+        capitalBase: summary.capitalBase,
         todayChange: summary.todayChange,
         todayChangePct: summary.todayChangePct,
         cash: summary.availableCash,

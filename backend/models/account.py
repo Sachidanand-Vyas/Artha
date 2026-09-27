@@ -101,5 +101,13 @@ class PortfolioOut(BaseModel):
     created_at: Optional[str] = None
     holdings: list[HoldingValuation] = Field(default_factory=list)
     totals: PortfolioTotals
-    timestamp: str = ""
+    # --- P&L breakdown: four DISTINCT metrics, never interchanged ---
+    # capital_base = initial capital (₹1,00,000 virtual) + manually imported
+    # cost — all money put INTO the portfolio. total_pnl = portfolio_value -
+    # capital_base, which equals realized + unrealized by construction.
+    capital_base: float = 0.0
+    total_pnl: float = 0.0
+    total_return_pct: float = 0.0
+    realized_pnl: float = 0.0  # closed positions: proceeds - avg cost, replayed
+    timestamp: str = ""  # latest quote time behind this valuation
     source: str = ""

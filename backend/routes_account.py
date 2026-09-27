@@ -182,6 +182,57 @@ def update_preferences(payload: PreferencesIn, user=Depends(current_user)) -> Us
 # ---------------------------------------------------------------------------
 # Portfolio
 # ---------------------------------------------------------------------------
+def _pnl_breakdown(user_id: int) -> dict:
+    """
+    Realized P&L + capital baseline, replayed from the transaction log
+    (chronological, average-cost matching — same method the holdings use).
+
+      realized   = Σ over sells of (execution price - avg cost at sale) x qty
+      capital_base = initial capital + manually imported cost basis
+      total_pnl  = (cash + market value) - capital_base  == realized + unrealized
+    """
+    with db() as conn:
+        txns = conn.execute(
+            """
+            SELECT symbol, type, quantity, execution_price, source
+            FROM transactions WHERE user_id = ?
+            ORDER BY timestamp ASC, id ASC
+            """,
+            (user_id,),
+        ).fetchall()
+        pf = conn.execute(
+            "SELECT initial_capital FROM portfolios WHERE user_id = ?", (user_id,)
+        ).fetchone()
+
+    realized = 0.0
+    imported = 0.0
+    book: dict[str, list[float]] = {}  # symbol -> [qty, avg_cost]
+    for t in txns:
+        symbol, qty, price = t["symbol"], float(t["quantity"]), float(t["execution_price"])
+        if t["type"] == "BUY":
+            if t["source"] == "import":
+                imported += qty * price  # money put in, spent outside Artha
+            slot = book.setdefault(symbol, [0.0, 0.0])
+            new_qty = slot[0] + qty
+            slot[1] = (slot[0] * slot[1] + qty * price) / new_qty if new_qty else 0.0
+            slot[0] = new_qty
+        else:  # SELL
+            slot = book.get(symbol)
+            held, avg = (slot[0], slot[1]) if slot else (0.0, 0.0)
+            matched = min(qty, held)
+            realized += (price - avg) * matched
+            if slot is not None:
+                slot[0] -= qty
+                if slot[0] <= 1e-9:
+                    del book[symbol]
+
+    initial = float(pf["initial_capital"]) if pf else 0.0
+    return {
+        "capital_base": round(initial + imported, 2),
+        "realized_pnl": round(realized, 2),
+    }
+
+
 def _portfolio_payload(user_id: int) -> PortfolioOut:
     with db() as conn:
         pf = conn.execute(
@@ -197,6 +248,12 @@ def _portfolio_payload(user_id: int) -> PortfolioOut:
     ]
     # Valuation comes from the existing portfolio service (real market prices).
     valuation = value_portfolio(holdings_in)
+    pnl = _pnl_breakdown(user_id) if pf else {"capital_base": 0.0, "realized_pnl": 0.0}
+
+    portfolio_value = (pf["virtual_cash"] if pf else 0.0) + valuation.totals.value
+    capital_base = pnl["capital_base"]
+    total_pnl = round(portfolio_value - capital_base, 2)
+    total_return_pct = round(total_pnl / capital_base * 100.0, 4) if capital_base > 0 else 0.0
 
     return PortfolioOut(
         exists=pf is not None,
@@ -206,6 +263,10 @@ def _portfolio_payload(user_id: int) -> PortfolioOut:
         created_at=pf["created_at"] if pf else None,
         holdings=valuation.holdings,
         totals=valuation.totals,
+        capital_base=capital_base,
+        total_pnl=total_pnl,
+        total_return_pct=total_return_pct,
+        realized_pnl=pnl["realized_pnl"],
         timestamp=valuation.timestamp,
         source=valuation.source,
     )

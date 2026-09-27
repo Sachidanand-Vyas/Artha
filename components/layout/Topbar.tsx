@@ -3,13 +3,14 @@
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, Command, Menu, Search } from "lucide-react";
+import { Bell, Command, Menu, Moon, Search, Sun } from "lucide-react";
 import { cn, formatFullDate, istMarketOpen } from "@/lib/utils";
 import { stockService } from "@/lib/services/stockService";
 import { marketService } from "@/lib/services/marketService";
 import { useAsync } from "@/lib/hooks/useAsync";
 import { useAppStore } from "@/lib/store/useAppStore";
 import { useAuthStore } from "@/lib/store/useAuthStore";
+import { toggleTheme, useTheme } from "@/lib/theme";
 
 const PAGE_TITLES: Record<string, string> = {
   "/": "Dashboard",
@@ -188,6 +189,21 @@ function Notifications() {
   );
 }
 
+/** Dark (black + gold) ⇄ Light (white + green) — persisted to localStorage. */
+function ThemeToggle() {
+  const theme = useTheme();
+  return (
+    <button
+      onClick={toggleTheme}
+      className="flex h-9 w-9 items-center justify-center rounded-lg border border-edge bg-surface2/60 text-secondary transition-colors hover:border-edgestrong hover:text-ink"
+      aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+      title={theme === "light" ? "Dark mode" : "Light mode"}
+    >
+      {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
+    </button>
+  );
+}
+
 export function Topbar({ onMenu }: { onMenu?: () => void }) {
   const pathname = usePathname();
   const title = PAGE_TITLES[pathname] ?? "Artha";
@@ -216,6 +232,7 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
         <div className="hidden md:block">
           <Notifications />
         </div>
+        <ThemeToggle />
 
         <Link
           href="/settings"

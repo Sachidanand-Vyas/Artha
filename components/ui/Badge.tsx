@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
-import type { RiskLevel, Sentiment } from "@/lib/types";
+import type { RiskLevel } from "@/lib/types";
 
 export function TrendBadge({
   value,
@@ -50,25 +50,6 @@ export function RiskBadge({ risk }: { risk: RiskLevel | null }) {
   return (
     <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold", map[risk])}>
       {risk}
-    </span>
-  );
-}
-
-export function SentimentBadge({ sentiment }: { sentiment: Sentiment }) {
-  const map: Record<Sentiment, string> = {
-    Positive: "bg-possoft text-pos",
-    Neutral: "bg-infosoft text-info",
-    Negative: "bg-negsoft text-neg",
-  };
-  const dot: Record<Sentiment, string> = {
-    Positive: "bg-pos",
-    Neutral: "bg-info",
-    Negative: "bg-neg",
-  };
-  return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold", map[sentiment])}>
-      <span className={cn("h-1.5 w-1.5 rounded-full", dot[sentiment])} />
-      {sentiment}
     </span>
   );
 }

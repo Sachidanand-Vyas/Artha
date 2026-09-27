@@ -32,6 +32,7 @@
   --violet-soft: rgba(139, 124, 246, 0.12);
 
   /* Charts */
+  --chart-grid: rgba(150, 168, 196, 0.07);
   --chart-1: #5b8def;
   --chart-2: #d4a94f;
   --chart-3: #16c784;
@@ -204,11 +205,8 @@
   100% {
     transform: translateX(100%);
   }
-}
-
-@keyframes pulse-dot {
-  0%,
-  100% {
+}@keyframes pulse-dot {
+  0%, 100% {
     opacity: 0.35;
     transform: scale(0.85);
   }
@@ -216,4 +214,88 @@
     opacity: 1;
     transform: scale(1);
   }
+}
+
+/* ------------------------------------------------------------------ */
+/*  LIGHT THEME — white + green.                                      */
+/*  Activated by [data-theme="light"] (set from localStorage before    */
+/*  first paint by the inline script in app/layout.tsx). Dark remains  */
+/*  the default and its token values above are untouched.              */
+/* ------------------------------------------------------------------ */
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg: #ffffff;
+  --bg-soft: #f7faf8;
+  --surface: #ffffff;
+  --surface-2: #f3f7f5;
+  --surface-3: #e9efec;
+  --edge: rgba(16, 32, 24, 0.10);
+  --edge-strong: rgba(16, 32, 24, 0.20);
+
+  /* Text */
+  --text-1: #121a16;
+  --text-2: #46554d;
+  --text-3: #74837b;
+
+  /* Brand accent becomes GREEN (was gold) — buttons, links, active nav. */
+  --gold: #0d9150;
+  --gold-bright: #12a55d;
+  --gold-soft: rgba(13, 145, 80, 0.12);
+
+  /* Semantics */
+  --pos: #0d9150;
+  --pos-soft: rgba(13, 145, 80, 0.12);
+  --neg: #dc2626;
+  --neg-soft: rgba(220, 38, 38, 0.10);
+  --info: #2563eb;
+  --info-soft: rgba(37, 99, 235, 0.10);
+  --violet: #7c3aed;
+  --violet-soft: rgba(124, 58, 237, 0.10);
+
+  /* Charts — tuned for white backgrounds, accent series = green */
+  --chart-grid: rgba(16, 32, 24, 0.07);
+  --chart-1: #2563eb;
+  --chart-2: #0d9150;
+  --chart-3: #059669;
+  --chart-4: #dc2626;
+  --chart-5: #7c3aed;
+  --chart-6: #0891b2;
+}
+
+/* Light-mode overrides for base-level effects (unlayered => wins over @layer base). */
+[data-theme="light"] body::before {
+  background:
+    radial-gradient(1000px 520px at 12% -12%, rgba(13, 145, 80, 0.05), transparent 62%),
+    radial-gradient(1000px 520px at 88% -12%, rgba(37, 99, 235, 0.045), transparent 62%);
+}
+
+[data-theme="light"] ::selection {
+  background: rgba(13, 145, 80, 0.25);
+  color: #121a16;
+}
+
+[data-theme="light"] :focus-visible {
+  outline: 2px solid rgba(13, 145, 80, 0.65);
+}
+
+[data-theme="light"] *::-webkit-scrollbar-thumb {
+  background: #cbd8d1;
+}
+[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
+  background: #b0c2b9;
+}
+
+/* Skeleton shimmer needs a dark streak on light surfaces. */
+[data-theme="light"] .skeleton::after {
+  background: linear-gradient(90deg, transparent, rgba(16, 32, 24, 0.06), transparent);
+}
+
+/* Dropdown/tooltip shadows: soften the heavy black used on dark surfaces. */
+[data-theme="light"] .shadow-black\/60 {
+  --tw-shadow-color: rgb(16 32 24 / 0.18);
+}
+[data-theme="light"] .shadow-black\/50 {
+  --tw-shadow-color: rgb(16 32 24 / 0.14);
 }

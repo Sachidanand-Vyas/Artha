@@ -23,7 +23,20 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+    >
+      <head>
+        {/* Apply the persisted theme before first paint (no flash). Dark is the default. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              'try{var t=localStorage.getItem("artha-theme");if(t==="light"||t==="dark"){document.documentElement.dataset.theme=t}}catch(e){}',
+          }}
+        />
+      </head>
       <body className="min-h-full">
         <AppShell>{children}</AppShell>
       </body>

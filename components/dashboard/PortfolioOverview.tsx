@@ -4,8 +4,11 @@
  * Dashboard portfolio overview — the logged-in user's REAL numbers.
  *
  * - No portfolio yet -> setup prompt (never fabricated values).
- * - With a portfolio -> value / invested / today's change / cash, all computed
- *   by the backend from live market prices.
+ * - With a portfolio -> six explicit metrics: total value, total P&L
+ *   (vs capital added), cost basis, unrealized P&L, today's P&L and cash,
+ *   plus realized P&L in the header — four DISTINCT P&L metrics, each
+ *   labelled for exactly what it measures, all computed by the backend from
+ *   live market prices and the user's own transaction log.
  * - The chart plots the cost-basis curve derived from the user's own
  *   transactions. Artha does not store past portfolio valuations, so no
  *   invented performance line is ever drawn.
@@ -25,7 +28,7 @@ import {
 import { History, Wallet } from "lucide-react";
 import { portfolioService, PortfolioNotSetupError } from "@/lib/services/portfolioService";
 import { useAsync } from "@/lib/hooks/useAsync";
-import { cn, inr, inrCompact } from "@/lib/utils";
+import { cn, inr, inrCompact, pct } from "@/lib/utils";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState, ErrorState, SkeletonRows } from "@/components/ui/States";
 import { TrendBadge } from "@/components/ui/Badge";
@@ -111,6 +114,36 @@ function SetupPrompt() {
   );
 }
 
+/** Tone for a P&L value: positive green, negative red, exactly zero neutral. */
+const toneOf = (v: number) => (v > 0 ? "text-pos" : v < 0 ? "text-neg" : "text-ink");
+
+/** "+₹54" / "-₹27" (Intl keeps the minus; add "+" only for positives). */
+const signedInr = (v: number) => `${v > 0 ? "+" : ""}${inr(v)}`;
+
+/** Honest price timestamp: date-only bars show a date, intraday shows time too. */
+function fmtPricesAt(iso: string | null): string {
+  if (!iso) return "";
+  const day = iso.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return "";
+  if (iso.length <= 10 || iso.slice(11, 16) === "00:00") {
+    const [y, m, d] = day.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  }
+  const t = Date.parse(iso);
+  return Number.isFinite(t)
+    ? new Date(t).toLocaleString("en-IN", {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "";
+}
+
 export function PortfolioOverview() {
   const { data, loading, error, reload } = useAsync(loadOverview, []);
 
@@ -141,30 +174,59 @@ export function PortfolioOverview() {
   if (data.kind === "no-portfolio") return <SetupPrompt />;
 
   const d = data.summary;
+  const pricesLabel = fmtPricesAt(d.pricesAt);
+
   const stats = [
-    { label: "Total Portfolio Value", value: inr(d.totalValue), explain: "Current market value of your holdings at latest available prices, plus available cash." },
-    { label: "Invested Amount", value: inr(d.invested), explain: "Total cost basis of the shares you hold (quantity × average buy price)." },
-    { label: "Today's Change", value: `${d.todayChange >= 0 ? "+" : ""}${inr(Math.abs(d.todayChange))}`, tone: d.todayChange >= 0 ? "text-pos" : "text-neg", explain: "Change in your holdings' value since the previous market close (cash does not move)." },
-    { label: "Available Cash", value: inr(d.availableCash), explain: "Uninvested virtual cash ready to deploy or keep as a buffer." },
+    {
+      label: "Total Portfolio Value",
+      value: inr(d.totalValue),
+      explain: "Available cash plus the current market value of every holding at latest available prices.",
+    },
+    {
+      label: "Total P&L",
+      value: `${signedInr(d.totalPnl)} (${pct(d.totalReturnPct)})`,
+      tone: toneOf(d.totalPnl),
+      explain: `Portfolio value minus all capital you've added (${inr(d.capitalBase)} — starting virtual cash plus imported holdings). Equals realized + unrealized P&L.`,
+    },
+    {
+      label: "Invested / Cost Basis",
+      value: inr(d.invested),
+      explain: "What the shares you still hold cost you: quantity × average buy price.",
+    },
+    {
+      label: "Unrealized P&L",
+      value: `${signedInr(d.unrealizedPnl)} (${pct(d.unrealizedReturnPct)})`,
+      tone: toneOf(d.unrealizedPnl),
+      explain: "Open gain or loss on positions you still hold: current market value − cost basis.",
+    },
+    {
+      label: "Today's P&L",
+      value: signedInr(d.todayChange),
+      tone: toneOf(d.todayChange),
+      explain: "Change in your holdings' value since the previous market close (cash does not move).",
+    },
+    {
+      label: "Available Cash",
+      value: inr(d.availableCash),
+      explain: "Uninvested virtual cash ready to deploy or keep as a buffer.",
+    },
   ];
 
   return (
     <Card className="p-5">
       <CardHeader
         title="Portfolio Overview"
-        subtitle="Your actual portfolio · valued at latest available market prices"
+        subtitle={
+          pricesLabel
+            ? `Your actual portfolio · Prices updated: ${pricesLabel}`
+            : "Your actual portfolio · valued at latest available market prices"
+        }
         right={
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <p className="text-[11px] text-muted">Overall return</p>
-              <p
-                className={cn(
-                  "text-sm font-bold tnum",
-                  d.overallReturnPct >= 0 ? "text-pos" : "text-neg",
-                )}
-              >
-                {d.overallReturnPct >= 0 ? "+" : ""}
-                {d.overallReturnPct.toFixed(1)}%
+              <p className="text-[11px] text-muted">Realized P&amp;L</p>
+              <p className={cn("text-sm font-bold tnum", toneOf(d.realizedPnl))}>
+                {signedInr(d.realizedPnl)}
               </p>
             </div>
             <TrendBadge value={d.todayChange} pct={d.todayChangePct} />
@@ -172,9 +234,9 @@ export function PortfolioOverview() {
         }
       />
 
-      <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-3">
         {stats.map((s) => (
-          <div key={s.label} className="rounded-xl border border-edge bg-surface2/40 px-4 py-3">
+          <div key={s.label} className="rounded-xl border border-edge bg-surface2/40 px-4 py-3" title={s.explain}>
             <p className="text-[11px] font-medium text-muted">{s.label}</p>
             <p className={cn("mt-1 text-lg font-bold tnum", s.tone ?? "text-ink")}>{s.value}</p>
           </div>
@@ -187,11 +249,11 @@ export function PortfolioOverview() {
             <AreaChart data={chartData} margin={{ top: 6, right: 4, bottom: 0, left: 0 }}>
               <defs>
                 <linearGradient id="pf-gold" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#d4a94f" stopOpacity={0.28} />
-                  <stop offset="100%" stopColor="#d4a94f" stopOpacity={0} />
+                  <stop offset="0%" stopColor="var(--gold)" stopOpacity={0.28} />
+                  <stop offset="100%" stopColor="var(--gold)" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(150,168,196,0.07)" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
               <XAxis
                 dataKey="time"
                 type="number"
@@ -213,7 +275,7 @@ export function PortfolioOverview() {
               <Area
                 type="monotone"
                 dataKey="Invested (cost basis)"
-                stroke="#d4a94f"
+                stroke="var(--gold)"
                 strokeWidth={2}
                 fill="url(#pf-gold)"
                 name="Invested (cost basis)"
@@ -235,7 +297,7 @@ export function PortfolioOverview() {
       <div className="mt-3 flex items-center gap-2 text-[11px] text-muted">
         <Wallet size={12} />
         The line above is your invested cost basis, built only from your own transactions — not an estimate of
-        past market value. Prices may be delayed, not live.
+        past market value. Prices are latest available, may be delayed — not tick-by-tick live.
       </div>
     </Card>
   );

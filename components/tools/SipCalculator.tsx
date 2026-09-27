@@ -60,23 +60,23 @@ export function SipCalculator() {
             <AreaChart data={chart} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
               <defs>
                 <linearGradient id="sip-g" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#d4a94f" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#d4a94f" stopOpacity={0} />
+                  <stop offset="0%" stopColor="var(--gold)" stopOpacity={0.3} />
+                  <stop offset="100%" stopColor="var(--gold)" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="sip-inv" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#5b8def" stopOpacity={0.15} />
-                  <stop offset="100%" stopColor="#5b8def" stopOpacity={0} />
+                  <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.15} />
+                  <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(150,168,196,0.07)" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
               <XAxis dataKey="label" tick={{ fill: "var(--text-3)", fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tickFormatter={(v: number) => fmtLakh(v)} tick={{ fill: "var(--text-3)", fontSize: 11 }} axisLine={false} tickLine={false} width={70} />
               <Tooltip
                 formatter={(value, name) => [fmtLakh(Number(value)), String(name)]}
-                contentStyle={{ background: "#182130", border: "1px solid rgba(150,168,196,0.22)", borderRadius: 12, fontSize: 12, color: "#e8eef6" }}
+                contentStyle={{ background: "var(--surface-3)", border: "1px solid var(--edge-strong)", borderRadius: 12, fontSize: 12, color: "var(--text-1)" }}
               />
-              <Area type="monotone" dataKey="invested" stroke="#5b8def" strokeWidth={1.5} strokeDasharray="4 4" fill="url(#sip-inv)" name="Invested" />
-              <Area type="monotone" dataKey="value" stroke="#d4a94f" strokeWidth={2} fill="url(#sip-g)" name="Value" />
+              <Area type="monotone" dataKey="invested" stroke="var(--chart-1)" strokeWidth={1.5} strokeDasharray="4 4" fill="url(#sip-inv)" name="Invested" />
+              <Area type="monotone" dataKey="value" stroke="var(--gold)" strokeWidth={2} fill="url(#sip-g)" name="Value" />
             </AreaChart>
           </ResponsiveContainer>
         </div>

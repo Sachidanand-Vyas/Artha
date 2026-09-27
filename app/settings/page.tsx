@@ -42,10 +42,10 @@ const DATA_SOURCES = [
     note: "Knowledge base + real backend data + exact calculations. Optional LLM formatting via env config.",
   },
   {
-    name: "News & Sentiment",
-    key: "newsService",
-    status: "mock" as const,
-    note: "Mock articles with sentiment labels and AI summaries — clearly labelled demo content.",
+    name: "News",
+    key: "newsService → FastAPI /api/news",
+    status: "live" as const,
+    note: "Real headlines aggregated from publisher RSS feeds (Economic Times, Mint, Business Standard) — original article links, no mock content.",
   },
   {
     name: "Notifications",
@@ -312,7 +312,7 @@ function SettingsForms({ user, setUser }: { user: AuthUser; setUser: (u: AuthUse
           subtitle="Exactly what is real data and what is still mocked."
           right={
             <span className="flex items-center gap-1.5 text-[11px] text-pos">
-              <Database size={12} /> 3 live · 1 demo · 1 planned
+              <Database size={12} /> 4 live · 1 planned
             </span>
           }
         />
@@ -324,9 +324,7 @@ function SettingsForms({ user, setUser }: { user: AuthUser; setUser: (u: AuthUse
                   "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border",
                   d.status === "live"
                     ? "border-pos/30 bg-possoft text-pos"
-                    : d.status === "mock"
-                      ? "border-gold/25 bg-goldsoft text-gold"
-                      : "border-edge bg-surface2 text-muted",
+                    : "border-edge bg-surface2 text-muted",
                 )}
               >
                 {d.status === "planned" ? <ChevronRight size={14} /> : <Check size={14} />}
@@ -337,8 +335,8 @@ function SettingsForms({ user, setUser }: { user: AuthUser; setUser: (u: AuthUse
               </div>
               <div className="text-right">
                 <p className="font-mono text-[10.5px] text-secondary">{d.key}</p>
-                <StatusPill tone={d.status === "live" ? "pos" : d.status === "mock" ? "gold" : "info"}>
-                  {d.status === "live" ? "Live" : d.status === "mock" ? "Demo" : "Planned"}
+                <StatusPill tone={d.status === "live" ? "pos" : "info"}>
+                  {d.status === "live" ? "Live" : "Planned"}
                 </StatusPill>
               </div>
             </div>
@@ -366,8 +364,8 @@ function ResponsibleUseCard() {
         <p className="flex items-start gap-2 text-muted">
           <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-gold/60" />
           Prices, technicals and fundamentals come from real market data (Yahoo Finance, latest available, may be
-          delayed). Your portfolio, cash and transactions are yours; news and learning content remain clearly
-          labelled demo material.
+          delayed). Your portfolio, cash and transactions are yours; news is live from publisher RSS feeds, while
+          learning content remains clearly labelled demo material.
         </p>
         <p className="flex items-start gap-2 text-muted">
           <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-gold/60" />

@@ -7,7 +7,7 @@ Artha is an AI-driven **financial literacy and decision-support platform** for b
 ## Stack
 
 - **Next.js 16** (App Router) + **React 19** + **TypeScript**
-- **Tailwind CSS v4** — custom dark-first fintech design system (`app/globals.css`)
+- **Tailwind CSS v4** — custom dark-first fintech design system (`app/globals.css`) with a white + green light theme (toggle in the topbar, persisted)
 - **lightweight-charts** — professional candlestick/volume charts (research page)
 - **recharts** — allocation donuts, performance lines, histograms, tool outputs
 - **zustand** (persisted) — watchlist + advisor conversation state
@@ -44,23 +44,23 @@ The backend stores accounts and portfolios in a local SQLite file
 | `/advisor` | Three-pane AI Advisor — conversation history, chat with structured answers, context panel |
 | `/learn` | Financial-literacy curriculum with lessons, quizzes and an interactive decision scenario |
 | `/tools` | SIP, compound interest, goal planner, retirement planner, risk profiler, portfolio analyzer, Monte Carlo simulation, tax calculator, backtesting |
-| `/news` | AI-summarised news with sentiment and category filters |
+| `/news` | Live news — real headlines from publisher RSS feeds (Economic Times, Mint, Business Standard) via `GET /api/news`, category filters, original article links |
 | `/settings` | Profile, preferences, API-readiness status, responsible-use disclosure |
 
 ## Architecture
 
 The frontend is built **API-first** behind typed services:
 
-- **`lib/services/`** — typed service interfaces (`marketService`, `stockService`, `portfolioService`, `authService`, `aiService`, `analyticsService`, `newsService`, `learningService`). Market data, auth and the portfolio talk to FastAPI; news/learning still use labelled sample data.
+- **`lib/services/`** — typed service interfaces (`marketService`, `stockService`, `portfolioService`, `authService`, `aiService`, `analyticsService`, `newsService`, `learningService`).  Market data, auth and the portfolio talk to FastAPI; news is real (backend aggregates publisher RSS), learning still uses labelled sample data.
 - **`backend/`** — FastAPI: Yahoo market data + indicators + recommendation model, deterministic calculation engine, account/auth routes (PBKDF2 passwords, bearer sessions) and the virtual portfolio (cash, holdings, orders, transactions) in SQLite.
-- **`lib/mock/`** — centralised sample data for the areas still in demo (news, learning). No fake data is scattered inside components.
+- **`lib/mock/`** — centralised sample data for the areas still in demo (learning). No fake data is scattered inside components.
 - **`lib/store/`** — zustand stores persisted to localStorage (session, watchlist, advisor conversations).
 - **`components/`** — reusable UI primitives, dashboard/portfolio/research/tools/learn/news components, and the responsive app shell (desktop sidebar + mobile drawer + bottom nav).
 
 ## Honesty by design
 
 - Your portfolio, cash, holdings and transactions come from **your account** on real market prices — a fresh user sees honest empty states, never fabricated numbers.
-- Where data doesn't exist (historical portfolio values, notification delivery, news), the UI says so instead of inventing it.
+- Where data doesn't exist (historical portfolio values, notification delivery), the UI says so instead of inventing it.
 - The AI Advisor is a **general finance assistant** behind `aiService` (knowledge base + your backend data + calculation engine, with optional LLM formatting via env); without an LLM configured the UI never claims one is running.
 - The Settings page lists exactly which systems are live vs demo.
 - Everything is educational — **not financial advice.**
@@ -70,4 +70,4 @@ The frontend is built **API-first** behind typed services:
 1. ~~Real market-data provider behind `marketService`~~ — done (Yahoo Finance via FastAPI).
 2. Optional LLM formatting behind `aiService` (already env-pluggable; runs without a key).
 3. ~~User accounts + database~~ — done (signup/login/onboarding + virtual & manual portfolios in SQLite).
-4. News API + sentiment pipeline behind `newsService` (still mock, deliberately untouched).
+4. ~~Real news behind `newsService`~~ — done (`GET /api/news`: trusted RSS aggregation, dedupe, short cache, honest 503 on total failure — never mock articles).

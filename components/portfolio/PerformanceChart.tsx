@@ -50,7 +50,7 @@ export function PerformanceChart({ history }: { history: HistoryPoint[] | null }
         <div className="mt-4 h-[280px]">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(150,168,196,0.07)" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
               <XAxis
                 dataKey="time"
                 type="number"
@@ -70,11 +70,11 @@ export function PerformanceChart({ history }: { history: HistoryPoint[] | null }
               />
               <Tooltip
                 contentStyle={{
-                  background: "#182130",
-                  border: "1px solid rgba(150,168,196,0.22)",
+                  background: "var(--surface-3)",
+                  border: "1px solid var(--edge-strong)",
                   borderRadius: 12,
                   fontSize: 12,
-                  color: "#e8eef6",
+                  color: "var(--text-1)",
                 }}
                 labelFormatter={(v) => fmtTick(Number(v))}
                 formatter={(value, name) => [inrCompact(Number(value)), String(name)]}
@@ -82,7 +82,7 @@ export function PerformanceChart({ history }: { history: HistoryPoint[] | null }
               <Line
                 type="monotone"
                 dataKey="Invested"
-                stroke="#d4a94f"
+                stroke="var(--gold)"
                 strokeWidth={2}
                 dot={false}
               />

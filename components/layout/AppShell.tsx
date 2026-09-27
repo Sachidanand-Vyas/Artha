@@ -18,7 +18,7 @@ const BOTTOM_NAV = [
 ];
 
 /** Auth pages render standalone (no sidebar/topbar) — same dark/gold theme. */
-const STANDALONE_ROUTES = ["/login", "/signup"];
+const STANDALONE_ROUTES = ["/login", "/signup", "/dev-e2e"]; // TEMP: harness
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);

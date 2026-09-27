@@ -154,25 +154,25 @@ export function BacktestTool() {
             <AreaChart data={result.chart} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
               <defs>
                 <linearGradient id="bt-sip" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#d4a94f" stopOpacity={0.25} />
-                  <stop offset="100%" stopColor="#d4a94f" stopOpacity={0} />
+                  <stop offset="0%" stopColor="var(--gold)" stopOpacity={0.25} />
+                  <stop offset="100%" stopColor="var(--gold)" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(150,168,196,0.07)" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
               <XAxis dataKey="label" tick={{ fill: "var(--text-3)", fontSize: 10 }} axisLine={false} tickLine={false} interval={Math.max(0, Math.floor(result.chart.length / 8))} />
               <YAxis tickFormatter={(v: number) => fmtLakh(v)} tick={{ fill: "var(--text-3)", fontSize: 10 }} axisLine={false} tickLine={false} width={70} />
               <Tooltip
                 formatter={(value, name) => [fmtLakh(Number(value)), String(name)]}
-                contentStyle={{ background: "#182130", border: "1px solid rgba(150,168,196,0.22)", borderRadius: 12, fontSize: 12, color: "#e8eef6" }}
+                contentStyle={{ background: "var(--surface-3)", border: "1px solid var(--edge-strong)", borderRadius: 12, fontSize: 12, color: "var(--text-1)" }}
               />
-              <Area type="monotone" dataKey="SIP value" stroke="#d4a94f" strokeWidth={2} fill="url(#bt-sip)" />
-              <Line type="monotone" dataKey="Lump sum value" stroke="#5b8def" strokeWidth={1.5} strokeDasharray="5 4" dot={false} />
-              <Line type="monotone" dataKey="Invested" stroke="#5f6d80" strokeWidth={1} dot={false} />
+              <Area type="monotone" dataKey="SIP value" stroke="var(--gold)" strokeWidth={2} fill="url(#bt-sip)" />
+              <Line type="monotone" dataKey="Lump sum value" stroke="var(--chart-1)" strokeWidth={1.5} strokeDasharray="5 4" dot={false} />
+              <Line type="monotone" dataKey="Invested" stroke="var(--text-3)" strokeWidth={1} dot={false} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
         <p className="mt-2 text-[11px] text-muted">
-          Gold = SIP value · blue = lump sum · grey = total invested
+          Gold/green = SIP value · blue = lump sum · grey = total invested
         </p>
       </Card>
     </div>

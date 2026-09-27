@@ -47,11 +47,11 @@ export function RiskMetrics({
 
     return [
       {
-        label: "Overall return",
-        value: pct(summary.overallReturnPct, 1),
-        tone: summary.overallReturnPct >= 0 ? "pos" : "neg",
+        label: "Total return",
+        value: pct(summary.totalReturnPct),
+        tone: summary.totalReturnPct >= 0 ? "pos" : "neg",
         explain:
-          "Unrealised gain or loss of your current holdings versus their cost basis, in percentage terms.",
+          "Total P&L (realized + unrealized) as a percentage of all capital you've added — starting virtual cash plus imported holdings.",
       },
       {
         label: "Today's change",
