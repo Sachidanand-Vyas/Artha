@@ -32,8 +32,10 @@ from models.account import (
 )
 from models.schemas import HoldingIn
 from services import auth
+from services import fx as fx_service
+from services import market_data as md
+from services import quotes as quote_service
 from services.portfolio import value_portfolio
-from services.universe import get_universe_snapshots
 
 router = APIRouter()
 
@@ -87,6 +89,151 @@ def _user_out(row) -> UserOut:
 def _fetch_user(user_id: int):
     with db() as conn:
         return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+
+# ---------------------------------------------------------------------------
+# Multi-currency helpers
+# ---------------------------------------------------------------------------
+# Canonical display symbol for matching ("RELIANCE.NS" -> "RELIANCE").
+# Memoised because identity resolution runs for every transaction during P&L
+# replay; registry/explicit tickers resolve offline, only unknown names hit
+# the provider search (itself cached for 10 minutes).
+_ENTRY_MEMO: dict[str, Optional[dict]] = {}
+
+
+def _entry_for(symbol: str) -> Optional[dict]:
+    """Memoised resolve_symbol — None when the symbol cannot be identified."""
+    key = (symbol or "").strip().upper()
+    if not key:
+        return None
+    if key in _ENTRY_MEMO:
+        return _ENTRY_MEMO[key]
+    try:
+        entry = md.resolve_symbol(key)
+    except Exception:
+        entry = None  # unresolvable -> callers keep the raw symbol
+    _ENTRY_MEMO[key] = entry
+    return entry
+
+
+def _canonical_symbol(symbol: str) -> str:
+    entry = _entry_for(symbol)
+    if entry:
+        return entry["symbol"]
+    return (symbol or "").strip().upper()  # unresolvable -> keep the raw key
+
+
+def _currency_of(symbol: str) -> str:
+    entry = _entry_for(symbol)
+    return (entry or {}).get("currency") or "INR"
+
+
+def _current_rate_or_none(currency: str) -> Optional[float]:
+    if currency == "INR":
+        return 1.0
+    try:
+        return float(fx_service.get_rate(currency, "INR"))
+    except Exception:
+        return None  # legacy-row approximation is skipped when FX is unavailable
+
+
+def _inr_amount(qty: float, native_price: float, symbol: str, stored) -> float:
+    """
+    INR value of one transaction row.
+
+    New rows carry `amount_inr` (captured with the FX rate at execution).
+    Legacy rows (NULL) fall back to qty × price — the old INR-only meaning —
+    except for legacy FOREIGN-currency symbols, where the stored face value
+    ($341 read as ₹341) is converted at the current rate as a documented
+    one-time approximation (no rate was ever stored for those rows).
+    """
+    if stored is not None:
+        return float(stored)
+    amount = qty * native_price
+    currency = _currency_of(symbol)
+    if currency != "INR":
+        rate = _current_rate_or_none(currency)
+        if rate:
+            amount *= rate
+    return amount
+
+
+_NATIVE_CCY_SYMBOL = {"INR": "₹", "USD": "$", "GBP": "£", "EUR": "€", "JPY": "¥"}
+
+
+def _fmt_native(amount: float, currency: str) -> str:
+    """"₹2,500.00" / "$341.00" / "341.00 GBP" — for user-facing messages."""
+    sym = _NATIVE_CCY_SYMBOL.get(currency)
+    return f"{sym}{amount:,.2f}" if sym else f"{amount:,.2f} {currency}"
+
+
+def _merge_legacy_holding(
+    conn,
+    user_id: int,
+    legacy_symbol: str,
+    canonical: str,
+    currency: str = "INR",
+    fx_rate: float = 1.0,
+) -> None:
+    """
+    Fold a pre-existing holding row stored under a non-canonical symbol
+    (e.g. 'RELIANCE.NS') into the canonical row ('RELIANCE') so one
+    instrument stays one position. Skipped when the two rows' currencies
+    differ (a single average must never mix currencies); those rows are left
+    alone and still valued independently.
+    """
+    if legacy_symbol == canonical:
+        return
+    legacy = conn.execute(
+        "SELECT * FROM holdings WHERE user_id = ? AND symbol = ?",
+        (user_id, legacy_symbol),
+    ).fetchone()
+    if legacy is None:
+        return
+    current = conn.execute(
+        "SELECT * FROM holdings WHERE user_id = ? AND symbol = ?",
+        (user_id, canonical),
+    ).fetchone()
+    legacy_keys = legacy.keys()
+    legacy_ccy = legacy["currency"] if "currency" in legacy_keys else "INR"
+    if current is None:
+        conn.execute(
+            "UPDATE holdings SET symbol = ? WHERE user_id = ? AND symbol = ?",
+            (canonical, user_id, legacy_symbol),
+        )
+        return
+    if (current["currency"] if "currency" in current.keys() else "INR") != legacy_ccy:
+        return
+
+    q0, a0 = float(current["quantity"]), float(current["average_buy_price"])
+    q1, a1 = float(legacy["quantity"]), float(legacy["average_buy_price"])
+    ai0 = float(current["average_buy_price_inr"] or 0.0) if "average_buy_price_inr" in current.keys() else 0.0
+    ai1 = float(legacy["average_buy_price_inr"] or 0.0) if "average_buy_price_inr" in legacy.keys() else 0.0
+    # Legacy rows: stored average IS the INR basis for INR assets; foreign
+    # assets are converted at the current rate (documented approximation).
+    conv = (lambda v: v * fx_rate) if currency != "INR" else (lambda v: v)
+    ai0 = ai0 if ai0 > 0 else conv(a0)
+    ai1 = ai1 if ai1 > 0 else conv(a1)
+    new_qty = q0 + q1
+    conn.execute(
+        """
+        UPDATE holdings SET quantity = ?, average_buy_price = ?,
+            average_buy_price_inr = ?, updated_at = ?
+        WHERE user_id = ? AND symbol = ?
+        """,
+        (
+            new_qty,
+            round((q0 * a0 + q1 * a1) / new_qty, 4),
+            round((q0 * ai0 + q1 * ai1) / new_qty, 4),
+            utcnow(),
+            user_id,
+            canonical,
+        ),
+    )
+    conn.execute(
+        "DELETE FROM holdings WHERE user_id = ? AND symbol = ?",
+        (user_id, legacy_symbol),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -184,17 +331,22 @@ def update_preferences(payload: PreferencesIn, user=Depends(current_user)) -> Us
 # ---------------------------------------------------------------------------
 def _pnl_breakdown(user_id: int) -> dict:
     """
-    Realized P&L + capital baseline, replayed from the transaction log
+    Realized P&L + capital baseline, replayed from the transaction log in INR
     (chronological, average-cost matching — same method the holdings use).
 
-      realized   = Σ over sells of (execution price - avg cost at sale) x qty
-      capital_base = initial capital + manually imported cost basis
-      total_pnl  = (cash + market value) - capital_base  == realized + unrealized
+      realized     = Σ over sells of (INR proceeds − INR avg cost at sale) × qty
+      capital_base = initial capital + manually imported cost basis (INR)
+      total_pnl    = (cash + market value) − capital_base == realized + unrealized
+
+    Multi-currency: each row's INR value is the one stored at EXECUTION
+    (amount_inr, which embeds the FX rate used then), so replaying history
+    never re-prices old trades with today's FX rate. Legacy rows without
+    amount_inr fall back to qty × price — the original INR-only meaning.
     """
     with db() as conn:
         txns = conn.execute(
             """
-            SELECT symbol, type, quantity, execution_price, source
+            SELECT symbol, type, quantity, execution_price, source, amount_inr
             FROM transactions WHERE user_id = ?
             ORDER BY timestamp ASC, id ASC
             """,
@@ -206,21 +358,24 @@ def _pnl_breakdown(user_id: int) -> dict:
 
     realized = 0.0
     imported = 0.0
-    book: dict[str, list[float]] = {}  # symbol -> [qty, avg_cost]
+    book: dict[str, list[float]] = {}  # canonical symbol -> [qty, avg INR cost/share]
     for t in txns:
-        symbol, qty, price = t["symbol"], float(t["quantity"]), float(t["execution_price"])
+        qty, price = float(t["quantity"]), float(t["execution_price"])
+        amount_inr = _inr_amount(qty, price, t["symbol"], t["amount_inr"])
+        symbol = _canonical_symbol(t["symbol"])
         if t["type"] == "BUY":
             if t["source"] == "import":
-                imported += qty * price  # money put in, spent outside Artha
+                imported += amount_inr  # money put in, spent outside Artha
             slot = book.setdefault(symbol, [0.0, 0.0])
             new_qty = slot[0] + qty
-            slot[1] = (slot[0] * slot[1] + qty * price) / new_qty if new_qty else 0.0
+            slot[1] = (slot[0] * slot[1] + amount_inr) / new_qty if new_qty else 0.0
             slot[0] = new_qty
         else:  # SELL
             slot = book.get(symbol)
             held, avg = (slot[0], slot[1]) if slot else (0.0, 0.0)
             matched = min(qty, held)
-            realized += (price - avg) * matched
+            proceeds_ps = amount_inr / qty if qty else 0.0
+            realized += (proceeds_ps - avg) * matched
             if slot is not None:
                 slot[0] -= qty
                 if slot[0] <= 1e-9:
@@ -243,7 +398,13 @@ def _portfolio_payload(user_id: int) -> PortfolioOut:
         ).fetchall()
 
     holdings_in = [
-        HoldingIn(symbol=r["symbol"], qty=r["quantity"], avg_cost=r["average_buy_price"])
+        HoldingIn(
+            symbol=r["symbol"],
+            qty=r["quantity"],
+            avg_cost=r["average_buy_price"],
+            currency=(r["currency"] if "currency" in r.keys() else None),
+            avg_cost_inr=(r["average_buy_price_inr"] if "average_buy_price_inr" in r.keys() else None),
+        )
         for r in rows
     ]
     # Valuation comes from the existing portfolio service (real market prices).
@@ -286,15 +447,18 @@ def _require_portfolio(user_id: int):
 
 
 def _get_priced(symbol: str) -> dict:
-    """Latest market snapshot for a tracked symbol, or a clean 404/502."""
+    """
+    Latest quote for ANY tradable symbol (registry or dynamically discovered).
+    Clean 404 for unknown/unpriceable symbols, 502 for provider failures.
+    """
     symbol = symbol.strip().upper()
-    snap = get_universe_snapshots().get(symbol)  # provider failure -> 502 via handler
-    if snap is None or snap.get("price") is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No market data for '{symbol}' — check the symbol on the Research page.",
-        )
-    return snap
+    try:
+        return quote_service.get_quote(symbol)
+    except md.SymbolNotFoundError as exc:
+        detail = str(exc.args[0] if exc.args else exc)
+        raise HTTPException(status_code=404, detail=detail)
+    except md.DataProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
 
 
 def _clean_qty(qty: float) -> int:
@@ -333,25 +497,48 @@ def start_portfolio(payload: PortfolioStartIn, user=Depends(current_user)) -> Po
 @router.post("/api/portfolio/order", response_model=PortfolioOut)
 def place_order(payload: OrderIn, user=Depends(current_user)) -> PortfolioOut:
     """
-    Virtual market order at the latest available real price.
+    Virtual market order at the latest available price, converted into the
+    portfolio's base currency (INR) at the FX rate of the moment.
 
-    BUY  : costs qty x price from virtual cash, upserts the holding (weighted
-           average cost) and records the transaction.
-    SELL : credits qty x price to virtual cash, reduces/removes the holding.
+    BUY  : INR cost = native price × qty × current FX rate for foreign stock
+           (× 1 for INR stock). The INR-converted cost — never the raw foreign
+           number — is validated against and deducted from virtual cash.
+    SELL : the current native price is converted at the CURRENT rate before
+           crediting virtual cash.
+
+    Every transaction records native price, native currency, the FX rate used
+    and the INR value, so historical cost basis never changes when FX moves.
     """
     user_id = user["id"]
     qty = _clean_qty(payload.qty)
-    symbol = payload.symbol.strip().upper()
+    requested = payload.symbol.strip().upper()
 
     _require_portfolio(user_id)
-    snap = _get_priced(symbol)                 # 404 for unknown symbols
-    price = round(float(snap["price"]), 2)
-    amount = round(qty * price, 2)
+    quote = _get_priced(requested)               # 404 for unknown symbols
+    symbol = quote["symbol"]                     # canonical display symbol
+    currency = quote["currency"]
+    price = round(float(quote["price"]), 2)      # NATIVE, per share
+
+    try:
+        fx_rate = float(fx_service.get_rate(currency, "INR"))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"FX rate {currency}->INR is unavailable, so the order cannot be "
+                f"valued in INR — nothing was placed. ({exc})"
+            ),
+        )
+
+    price_inr = price * fx_rate
+    native_amount = round(qty * price, 2)
+    amount_inr = round(qty * price_inr, 2)       # what INR actually moves
 
     with db() as conn:
         pf = conn.execute(
             "SELECT * FROM portfolios WHERE user_id = ?", (user_id,)
         ).fetchone()
+        _merge_legacy_holding(conn, user_id, requested, symbol, currency, fx_rate)
         holding = conn.execute(
             "SELECT * FROM holdings WHERE user_id = ? AND symbol = ?",
             (user_id, symbol),
@@ -359,32 +546,58 @@ def place_order(payload: OrderIn, user=Depends(current_user)) -> PortfolioOut:
 
         if payload.side == "BUY":
             cash = float(pf["virtual_cash"])
-            if amount > cash + 1e-6:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"Insufficient virtual cash: {qty} x ₹{price:,.2f} = ₹{amount:,.2f}, "
+            if amount_inr > cash + 1e-6:
+                if currency == "INR":
+                    # Unchanged wording for the INR-only case.
+                    detail = (
+                        f"Insufficient virtual cash: {qty} x ₹{price:,.2f} = ₹{amount_inr:,.2f}, "
                         f"but you have ₹{cash:,.2f}."
-                    ),
-                )
+                    )
+                else:
+                    detail = (
+                        f"Insufficient virtual cash: {qty} x {_fmt_native(price, currency)} "
+                        f"× {fx_rate:.2f} INR/{currency} = ₹{amount_inr:,.2f}, "
+                        f"but you have ₹{cash:,.2f}."
+                    )
+                raise HTTPException(status_code=400, detail=detail)
             old_qty = float(holding["quantity"]) if holding else 0.0
             old_avg = float(holding["average_buy_price"]) if holding else 0.0
+            stored_inr = (
+                float(holding["average_buy_price_inr"])
+                if holding and holding["average_buy_price_inr"] is not None
+                else 0.0
+            )
+            # Legacy rows (0) have no stored INR basis: an INR asset keeps the
+            # stored figure (its old meaning); a legacy FOREIGN asset — whose
+            # face value used to be mislabelled ₹ — is converted at the current
+            # rate, the same approximation valuation uses.
+            old_avg_inr = (
+                stored_inr
+                if stored_inr > 0
+                else (old_avg * fx_rate if currency != "INR" else old_avg)
+            )
             new_qty = old_qty + qty
             new_avg = (old_qty * old_avg + qty * price) / new_qty
+            new_avg_inr = (old_qty * old_avg_inr + amount_inr) / new_qty
             conn.execute(
                 """
-                INSERT INTO holdings (user_id, symbol, quantity, average_buy_price, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO holdings
+                    (user_id, symbol, quantity, average_buy_price, currency,
+                     average_buy_price_inr, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id, symbol) DO UPDATE SET
                     quantity = excluded.quantity,
                     average_buy_price = excluded.average_buy_price,
+                    currency = excluded.currency,
+                    average_buy_price_inr = excluded.average_buy_price_inr,
                     updated_at = excluded.updated_at
                 """,
-                (user_id, symbol, new_qty, round(new_avg, 4), utcnow()),
+                (user_id, symbol, new_qty, round(new_avg, 4), currency,
+                 round(new_avg_inr, 4), utcnow()),
             )
             conn.execute(
                 "UPDATE portfolios SET virtual_cash = ? WHERE user_id = ?",
-                (round(cash - amount, 2), user_id),
+                (round(cash - amount_inr, 2), user_id),
             )
         else:  # SELL
             owned = int(holding["quantity"]) if holding else 0
@@ -404,17 +617,21 @@ def place_order(payload: OrderIn, user=Depends(current_user)) -> PortfolioOut:
                     "UPDATE holdings SET quantity = ?, updated_at = ? WHERE user_id = ? AND symbol = ?",
                     (remaining, utcnow(), user_id, symbol),
                 )
+            # Credit at the CURRENT FX rate (not the rate you bought at).
             conn.execute(
                 "UPDATE portfolios SET virtual_cash = ? WHERE user_id = ?",
-                (round(cash + amount, 2), user_id),
+                (round(cash + amount_inr, 2), user_id),
             )
 
         conn.execute(
             """
-            INSERT INTO transactions (user_id, symbol, type, quantity, execution_price, source, timestamp)
-            VALUES (?, ?, ?, ?, ?, 'trade', ?)
+            INSERT INTO transactions
+                (user_id, symbol, type, quantity, execution_price, source, timestamp,
+                 currency, fx_rate, amount_inr)
+            VALUES (?, ?, ?, ?, ?, 'trade', ?, ?, ?, ?)
             """,
-            (user_id, symbol, payload.side, qty, price, utcnow()),
+            (user_id, symbol, payload.side, qty, price, utcnow(),
+             currency, fx_rate, amount_inr),
         )
 
     return _portfolio_payload(user_id)
@@ -424,45 +641,85 @@ def place_order(payload: OrderIn, user=Depends(current_user)) -> PortfolioOut:
 def add_position(payload: PositionIn, user=Depends(current_user)) -> PortfolioOut:
     """
     Manual import of an existing real-world holding (NOT a trade, NOT a broker
-    integration). Adds quantity at the user-entered average cost; virtual cash
-    is unaffected because this money was spent outside Artha.
+    integration). The average price you enter is in the security's NATIVE
+    currency; it is converted ONCE at import time to build the holding's INR
+    cost basis (the FX rate used is stored on the transaction row), so later
+    FX moves cannot rewrite what you paid. Virtual cash is unaffected because
+    this money was spent outside Artha.
     """
     user_id = user["id"]
     qty = _clean_qty(payload.qty)
     if payload.avg_cost <= 0:
         raise HTTPException(status_code=400, detail="Average buy price must be greater than zero.")
-    symbol = payload.symbol.strip().upper()
+    requested = payload.symbol.strip().upper()
 
     _require_portfolio(user_id)
-    # Validate the symbol against the tracked universe so it can be priced.
-    _get_priced(symbol)
+    # Validate against any tradable symbol (not just the tracked universe).
+    quote = _get_priced(requested)
+    symbol = quote["symbol"]
+    currency = quote["currency"]
+    try:
+        fx_rate = float(fx_service.get_rate(currency, "INR"))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"FX rate {currency}->INR is unavailable, so this holding cannot be "
+                f"given an INR cost basis — nothing was saved. ({exc})"
+            ),
+        )
+
+    avg_cost = round(payload.avg_cost, 2)              # NATIVE, per share
+    avg_cost_inr = round(avg_cost * fx_rate, 4)        # INR basis captured NOW
+    amount_inr = round(qty * avg_cost * fx_rate, 2)
 
     with db() as conn:
+        _merge_legacy_holding(conn, user_id, requested, symbol, currency, fx_rate)
         holding = conn.execute(
             "SELECT * FROM holdings WHERE user_id = ? AND symbol = ?",
             (user_id, symbol),
         ).fetchone()
         old_qty = float(holding["quantity"]) if holding else 0.0
         old_avg = float(holding["average_buy_price"]) if holding else 0.0
+        stored_inr = (
+            float(holding["average_buy_price_inr"])
+            if holding and holding["average_buy_price_inr"] is not None
+            else 0.0
+        )
+        # Legacy row: INR figure as-is; legacy foreign converted at current rate
+        # (the documented approximation — no rate was stored back then).
+        old_avg_inr = (
+            stored_inr
+            if stored_inr > 0
+            else (old_avg * fx_rate if currency != "INR" else old_avg)
+        )
         new_qty = old_qty + qty
-        new_avg = (old_qty * old_avg + qty * payload.avg_cost) / new_qty
+        new_avg = (old_qty * old_avg + qty * avg_cost) / new_qty
+        new_avg_inr = (old_qty * old_avg_inr + amount_inr) / new_qty
         conn.execute(
             """
-            INSERT INTO holdings (user_id, symbol, quantity, average_buy_price, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO holdings
+                (user_id, symbol, quantity, average_buy_price, currency,
+                 average_buy_price_inr, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, symbol) DO UPDATE SET
                 quantity = excluded.quantity,
                 average_buy_price = excluded.average_buy_price,
+                currency = excluded.currency,
+                average_buy_price_inr = excluded.average_buy_price_inr,
                 updated_at = excluded.updated_at
             """,
-            (user_id, symbol, new_qty, round(new_avg, 4), utcnow()),
+            (user_id, symbol, new_qty, round(new_avg, 4), currency,
+             round(new_avg_inr, 4), utcnow()),
         )
         conn.execute(
             """
-            INSERT INTO transactions (user_id, symbol, type, quantity, execution_price, source, timestamp)
-            VALUES (?, ?, 'BUY', ?, ?, 'import', ?)
+            INSERT INTO transactions
+                (user_id, symbol, type, quantity, execution_price, source, timestamp,
+                 currency, fx_rate, amount_inr)
+            VALUES (?, ?, 'BUY', ?, ?, 'import', ?, ?, ?, ?)
             """,
-            (user_id, symbol, qty, round(payload.avg_cost, 2), utcnow()),
+            (user_id, symbol, qty, avg_cost, utcnow(), currency, fx_rate, amount_inr),
         )
 
     return _portfolio_payload(user_id)
@@ -474,7 +731,8 @@ def list_transactions(user=Depends(current_user)) -> list[TransactionOut]:
     with db() as conn:
         rows = conn.execute(
             """
-            SELECT id, symbol, type, quantity, execution_price, source, timestamp
+            SELECT id, symbol, type, quantity, execution_price, source, timestamp,
+                   currency, fx_rate, amount_inr
             FROM transactions WHERE user_id = ?
             ORDER BY timestamp DESC, id DESC LIMIT 200
             """,
@@ -486,8 +744,20 @@ def list_transactions(user=Depends(current_user)) -> list[TransactionOut]:
             symbol=r["symbol"],
             type=r["type"],
             qty=r["quantity"],
-            price=r["execution_price"],
-            amount=round(r["quantity"] * r["execution_price"], 2),
+            price=r["execution_price"],            # NATIVE currency
+            # INR at execution; legacy rows use the same fallback as the P&L
+            # replay (qty x price, converted for legacy foreign symbols).
+            amount=round(
+                _inr_amount(
+                    float(r["quantity"]),
+                    float(r["execution_price"]),
+                    r["symbol"],
+                    r["amount_inr"],
+                ),
+                2,
+            ),
+            currency=r["currency"] or "INR",
+            fx_rate=r["fx_rate"] if r["fx_rate"] is not None else 1.0,
             source=r["source"],
             timestamp=r["timestamp"],
         )

@@ -68,12 +68,43 @@ export function usdCompact(n: number): string {
   return `${sign}$${num0(abs)}`;
 }
 
-export function marketCapLabel(n: number, currency: "INR" | "USD" = "INR"): string {
-  return currency === "INR" ? inrCompact(n) : usdCompact(n);
+export function marketCapLabel(n: number, currency: string = "INR"): string {
+  if (currency === "INR") return inrCompact(n);
+  if (currency === "USD") return usdCompact(n);
+  // Other currencies: compact number + explicit code (never a wrong symbol).
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  if (abs >= 1e12) return `${sign}${num1(abs / 1e12)}T ${currency}`;
+  if (abs >= 1e9) return `${sign}${num1(abs / 1e9)}B ${currency}`;
+  if (abs >= 1e6) return `${sign}${num1(abs / 1e6)}M ${currency}`;
+  return `${sign}${num(abs)} ${currency}`;
 }
 
-export function currencyOf(c: "INR" | "USD"): (n: number) => string {
-  return c === "INR" ? inr : usd;
+export function currencyOf(c: string): (n: number) => string {
+  if (c === "INR") return inr;
+  const cached = currencyFmtCache.get(c);
+  if (cached) return cached;
+  let fn: (n: number) => string;
+  try {
+    const f = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: c,
+      maximumFractionDigits: 2,
+      minimumFractionDigits: 2,
+    });
+    fn = (n) => f.format(n);
+  } catch {
+    // Unknown/unsupported code -> show the code explicitly, never a wrong symbol.
+    fn = (n) => `${c} ${num2(n)}`;
+  }
+  currencyFmtCache.set(c, fn);
+  return fn;
+}
+const currencyFmtCache = new Map<string, (n: number) => string>();
+
+/** "341.00 USD" — code shown next to the amount when it isn't the INR base. */
+export function withCurrencyCode(c: string): string {
+  return c === "INR" ? "" : c;
 }
 
 /**

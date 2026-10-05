@@ -87,8 +87,10 @@ class TransactionOut(BaseModel):
     symbol: str
     type: Literal["BUY", "SELL"]
     qty: float
-    price: float
-    amount: float
+    price: float      # NATIVE currency, per share (as executed)
+    amount: float     # INR value at execution (qty x price x FX rate used)
+    currency: str = "INR"   # native currency of `price`
+    fx_rate: float = 1.0     # INR rate captured at execution time
     source: str
     timestamp: str
 

@@ -89,9 +89,9 @@ class StockSummary(BaseModel):
     symbol: str
     name: str
     exchange: str
-    country: Literal["IN", "US"]
+    country: str                         # 'IN' | 'US' | venue country of a discovered listing
     sector: str
-    currency: Literal["INR", "USD"]
+    currency: str                        # native quote currency ('INR', 'USD', 'GBP', …)
     price: float
     change: float
     change_percent: float
@@ -152,27 +152,37 @@ class MarketSnapshot(BaseModel):
 
 
 class HoldingIn(BaseModel):
-    """A user holding (quantity/average cost are user inputs, not market data)."""
+    """A user holding (quantity/average cost are user inputs, not market data).
+
+    avg_cost is in the security's NATIVE currency; avg_cost_inr is the stored
+    INR cost basis per share (captured with the FX rate at execution). When it
+    is absent/0 (legacy rows) readers keep the old behaviour: avg_cost is
+    treated as an INR figure.
+    """
 
     symbol: str
     qty: float
     avg_cost: float
+    currency: Optional[str] = None       # native currency, when known
+    avg_cost_inr: Optional[float] = None  # INR cost basis per share
 
 
 class HoldingValuation(BaseModel):
     symbol: str
     name: str
     sector: str
-    country: Literal["IN", "US"]
-    currency: Literal["INR", "USD"]
+    country: str
+    currency: str                        # NATIVE currency of avg_cost / ltp
     qty: float
-    avg_cost: float
-    invested: float
-    ltp: Optional[float] = None            # latest available market price
-    day_change: Optional[float] = None     # rupee change vs previous close (per holding)
+    avg_cost: float                      # native, per share
+    avg_cost_inr: Optional[float] = None # INR cost basis, per share
+    invested: float                      # INR: qty x stored INR cost basis
+    ltp: Optional[float] = None          # native latest available market price
+    fx_rate: Optional[float] = None      # current INR rate for `currency` (1.0 for INR)
+    day_change: Optional[float] = None     # INR change vs previous close (per holding)
     day_change_percent: Optional[float] = None
-    value: Optional[float] = None          # qty * ltp
-    unrealized_pnl: Optional[float] = None  # value - invested (cost basis); null when unpriced
+    value: Optional[float] = None          # INR: qty x ltp x fx_rate
+    unrealized_pnl: Optional[float] = None  # INR value − INR cost basis; null when unpriced
     return_percent: Optional[float] = None
     weight_percent: float = 0.0            # share of total valued equity
     available: bool = True                 # false when quote could not be fetched
@@ -228,9 +238,58 @@ class CalcResult(BaseModel):
 
 
 class AdvisorAskIn(BaseModel):
-    """Question handed to the optional LLM layer (context is only what's needed)."""
+    """Question handed to the optional LLM layer (context is only what's needed).
 
-    question: str
-    history: list[dict] = Field(default_factory=list)   # [{role, content}]
+    Length limits are input validation: the model never receives unbounded
+    user input, and oversized payloads are rejected with 422 (the frontend
+    then uses its local answer).
+    """
+
+    question: str = Field(..., max_length=4_000)
+    history: list[dict] = Field(default_factory=list, max_length=12)  # [{role, content}]
     context: Optional[dict] = None                      # structured Artha data
-    intent: str = ""
+    intent: str = Field(default="", max_length=40)
+
+
+class InstrumentOut(BaseModel):
+    """One hit from GET /api/stocks/search."""
+
+    symbol: str        # display symbol (registry key when known, else ticker minus venue suffix)
+    ticker: str        # provider ticker (RELIANCE.NS, TSLA, …)
+    name: str
+    exchange: str
+    country: str
+    currency: str
+    quote_type: str = "EQUITY"
+
+
+class SearchOut(BaseModel):
+    query: str
+    results: list[InstrumentOut] = Field(default_factory=list)  # empty = no matching company
+    source: str
+
+
+class QuoteOut(BaseModel):
+    """
+    Latest available quote for one instrument (GET /api/stocks/…/quote[s]).
+
+    price/change are in `currency`; `fx_rate` is the current INR rate for that
+    currency (1.0 for INR, null when the FX provider is unavailable) so the UI
+    can show the conversion explicitly instead of silently treating $ as ₹.
+    """
+
+    symbol: str
+    ticker: str
+    name: str
+    exchange: str
+    country: str
+    currency: str
+    sector: Optional[str] = None
+    price: Optional[float] = None
+    change: Optional[float] = None
+    change_percent: Optional[float] = None
+    timestamp: Optional[str] = None   # provider bar time (latest available), never invented
+    fx_rate: Optional[float] = None   # INR per 1 unit of `currency`
+    available: bool = True
+    source: str
+    error: Optional[str] = None

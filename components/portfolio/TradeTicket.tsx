@@ -3,22 +3,34 @@
 /**
  * TRADE TICKET — virtual BUY/SELL at real latest-available prices.
  *
- * Used on the Portfolio page (with a symbol picker) and on Research (fixed
- * symbol). All validation happens here AND on the backend; errors from the
- * backend (insufficient cash / shares) are surfaced verbatim.
+ * Multi-currency (portfolio base = INR): a foreign stock shows its NATIVE
+ * price AND the FX conversion the order will use — never "$341" that silently
+ * deducts ₹341:
+ *
+ *   Price: $341.00 USD
+ *   FX rate: 1 USD = ₹95.80
+ *   Estimated cost: ₹32,667.80
+ *   Available cash: ₹1,00,000 → After purchase: ₹67,332.20
+ *
+ * The current quote refreshes on its own (light endpoint) — historical data
+ * is never refetched here. All validation happens here AND on the backend;
+ * backend errors (insufficient cash/shares) are surfaced verbatim.
  */
 
-import { useState } from "react";
-import { Loader2, Receipt, ShoppingCart, TrendingDown } from "lucide-react";
-import type { Stock } from "@/lib/types";
+import { useEffect, useState } from "react";
+import { Loader2, Receipt, ShoppingCart, TrendingDown, TriangleAlert } from "lucide-react";
+import type { Stock, StockSearchResult } from "@/lib/types";
 import { portfolioService, type OrderSide } from "@/lib/services/portfolioService";
+import { stockService } from "@/lib/services/stockService";
 import { ApiError } from "@/lib/services/api";
-import { cn, currencyOf } from "@/lib/utils";
+import { cn, currencyOf, inr, inrPrecise } from "@/lib/utils";
+import { usePoll } from "@/lib/hooks/usePoll";
 import { Card, CardHeader } from "@/components/ui/Card";
 
 interface TradeTicketProps {
-  /** Universe list — used for the picker and the displayed live price. */
+  /** Universe list — datalist options + fallback price while quotes load. */
   stocks: Stock[];
+  /** Available virtual cash — ALWAYS the INR base currency. */
   cash: number;
   owned: Record<string, number>;
   symbol: string;
@@ -43,20 +55,75 @@ export function TradeTicket({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<StockSearchResult[]>([]);
+
+  // Latest quote for this symbol: price, native currency and the FX rate the
+  // order will use. Polls while visible (default 45s); no history/fundamentals.
+  const { data: quote } = usePoll(() => stockService.getQuote(symbol), [symbol]);
 
   const stock = stocks.find((s) => s.symbol === symbol);
-  const fmt = currencyOf(stock?.currency ?? "INR");
-  const price = stock?.price ?? null;
+  const currency = quote?.currency ?? stock?.currency ?? "INR";
+  const fmt = currencyOf(currency);
+  const price = quote?.price ?? stock?.price ?? null;
+  const name = quote?.name ?? stock?.name ?? "";
+  /** INR rate for 1 unit of `currency` (1 for INR; null = FX unavailable). */
+  const fxRate: number | null = currency === "INR" ? 1 : quote?.fxRate ?? null;
+  const fxReady = fxRate != null;
+
   const ownedQty = owned[symbol] ?? 0;
   const qtyNum = Number(qty);
-  const estimate = price != null && Number.isFinite(qtyNum) && qtyNum > 0 ? qtyNum * price : null;
+
+  const nativeEstimate =
+    price != null && Number.isFinite(qtyNum) && qtyNum > 0 ? qtyNum * price : null;
+  /** What actually moves from the INR cash balance (native × qty × FX). */
+  const estimateInr = nativeEstimate != null && fxReady ? nativeEstimate * (fxRate ?? 1) : null;
+
+  const editable = Boolean(onSymbolChange);
+
+  // Dynamic suggestions: any searched company can be traded, not only the
+  // preloaded universe (debounced; failures just leave the current options).
+  useEffect(() => {
+    if (!editable) return;
+    const term = symbol.trim();
+    let alive = true;
+    // Debounced: state updates only inside the timer callback.
+    const timer = setTimeout(() => {
+      if (term.length < 2) {
+        setSuggestions([]);
+        return;
+      }
+      stockService
+        .searchStocks(term, 8)
+        .then((results) => {
+          if (alive) setSuggestions(results);
+        })
+        .catch(() => {
+          /* keep previous suggestions */
+        });
+    }, term.length < 2 ? 0 : 300);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [symbol, editable]);
 
   const canSubmit =
-    !!stock &&
     price != null &&
+    fxReady &&
     Number.isInteger(qtyNum) &&
     qtyNum > 0 &&
-    (side === "BUY" ? estimate! <= cash + 1e-6 : qtyNum <= ownedQty);
+    (side === "BUY" ? estimateInr != null && estimateInr <= cash + 1e-6 : qtyNum <= ownedQty);
+
+  const optionSymbols = (() => {
+    const seen = new Set<string>();
+    const out: { symbol: string; name: string }[] = [];
+    for (const s of [...stocks, ...suggestions.map((r) => ({ symbol: r.symbol, name: r.name }))]) {
+      if (seen.has(s.symbol)) continue;
+      seen.add(s.symbol);
+      out.push(s);
+    }
+    return out;
+  })();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -64,17 +131,33 @@ export function TradeTicket({
     setError(null);
     setSuccess(null);
 
-    if (!stock || price == null) {
-      setError("Pick a tracked stock first.");
+    if (price == null) {
+      setError("Price unavailable for this symbol — try again in a moment.");
+      return;
+    }
+    if (!fxReady) {
+      setError(
+        `FX rate ${currency}/INR is unavailable right now — the order cannot be ` +
+          "valued in INR, so it was not placed.",
+      );
       return;
     }
     if (!Number.isInteger(qtyNum) || qtyNum <= 0) {
       setError("Quantity must be a whole number greater than zero.");
       return;
     }
-    if (side === "BUY" && estimate != null && estimate > cash) {
-      setError(`Insufficient virtual cash — you need ${fmt(estimate)} but have ${fmt(cash)}.`);
-      return;
+    if (side === "BUY") {
+      if (estimateInr == null || estimateInr > cash) {
+        const needed = estimateInr != null ? inrPrecise(estimateInr) : "—";
+        const detail =
+          currency !== "INR" && estimateInr != null
+            ? ` (${qtyNum} × ${fmt(price)} ${currency} × ${fxRate} = ${needed})`
+            : "";
+        setError(
+          `Insufficient virtual cash — you need ${needed}${detail} but have ${inr(cash)}.`,
+        );
+        return;
+      }
     }
     if (side === "SELL" && qtyNum > ownedQty) {
       setError(`You own ${ownedQty} share${ownedQty === 1 ? "" : "s"} of ${symbol}.`);
@@ -84,10 +167,15 @@ export function TradeTicket({
     setBusy(true);
     try {
       await portfolioService.order(symbol, side, qtyNum);
+      const native = `${fmt(price)}${currency !== "INR" ? ` ${currency}` : ""}`;
+      const inrNote =
+        currency !== "INR" && estimateInr != null
+          ? ` → ${inrPrecise(estimateInr)} ${side === "BUY" ? "deducted" : "credited"}`
+          : " (virtual)";
       setSuccess(
         side === "BUY"
-          ? `Bought ${qtyNum} × ${symbol} at ${fmt(price)} (virtual).`
-          : `Sold ${qtyNum} × ${symbol} at ${fmt(price)} (virtual).`,
+          ? `Bought ${qtyNum} × ${symbol} at ${native}${inrNote}.`
+          : `Sold ${qtyNum} × ${symbol} at ${native}${inrNote}.`,
       );
       setQty("");
       onDone();
@@ -102,7 +190,7 @@ export function TradeTicket({
     <Card className="p-5">
       <CardHeader
         title="Trade (virtual)"
-        subtitle="Real market prices · paper money only"
+        subtitle="Latest available market prices · INR cash · paper money only"
         right={
           <div className="flex items-center gap-1 rounded-lg border border-edge bg-surface2/70 p-0.5">
             {(["BUY", "SELL"] as OrderSide[]).map((s) => (
@@ -144,7 +232,7 @@ export function TradeTicket({
                 className="input font-mono uppercase"
               />
               <datalist id="trade-symbols">
-                {stocks.map((s) => (
+                {optionSymbols.map((s) => (
                   <option key={s.symbol} value={s.symbol}>
                     {s.name}
                   </option>
@@ -155,12 +243,14 @@ export function TradeTicket({
             <div className="input font-mono">{symbol}</div>
           )}
           <p className="mt-1 text-[11px] text-muted">
-            {stock ? `${stock.name} · ` : ""}
-            {price != null ? `Latest price ${fmt(price)}` : "Price unavailable — pick a tracked stock"}
+            {name ? `${name} · ` : ""}
+            {price != null
+              ? `Latest price ${fmt(price)}${currency !== "INR" ? ` ${currency}` : ""}`
+              : "Price unavailable — check the symbol"}
           </p>
         </div>
 
-        {/* Quantity */}
+        {/* Quantity + INR estimate */}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="mb-1.5 block text-[12px] font-medium text-secondary">Quantity</label>
@@ -176,19 +266,61 @@ export function TradeTicket({
           </div>
           <div>
             <label className="mb-1.5 block text-[12px] font-medium text-secondary">
-              {side === "BUY" ? "Estimated cost" : "Estimated proceeds"}
+              Estimated {side === "BUY" ? "cost" : "proceeds"} (INR)
             </label>
             <div className="input tnum !text-ink">
-              {estimate != null ? fmt(estimate) : "—"}
+              {estimateInr != null
+                ? currency === "INR"
+                  ? fmt(estimateInr)
+                  : inrPrecise(estimateInr)
+                : "—"}
             </div>
           </div>
         </div>
 
-        {/* Account state */}
+        {/* Foreign stock: make the conversion explicit — never $-as-₹ */}
+        {currency !== "INR" && (
+          <div className="space-y-1.5 rounded-xl border border-edge bg-surface2/40 px-3.5 py-2.5 text-[12px]">
+            <div className="flex items-center justify-between">
+              <span className="text-muted">Price</span>
+              <span className="tnum font-semibold text-ink">
+                {price != null ? fmt(price) : "—"} {currency}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted">FX rate</span>
+              <span className="tnum font-semibold text-ink">
+                {fxRate != null ? `1 ${currency} = ${inr(fxRate)}` : "Unavailable"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between border-t border-edge pt-1.5">
+              <span className="text-muted">Estimated {side === "BUY" ? "cost" : "proceeds"}</span>
+              <span className="tnum font-semibold text-ink">
+                {estimateInr != null ? inrPrecise(estimateInr) : "—"}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {!fxReady && currency !== "INR" && (
+          <p className="flex items-start gap-1.5 rounded-lg border border-gold/30 bg-goldsoft/50 px-3 py-2 text-[12px] text-secondary">
+            <TriangleAlert size={13} className="mt-0.5 shrink-0 text-gold" />
+            FX rate {currency}/INR is unavailable right now — trading is paused until the rate can be
+            fetched. No conversion is guessed.
+          </p>
+        )}
+
+        {/* Account state — cash is always the INR base currency */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-edge bg-surface2/40 px-3.5 py-2.5 text-[12px]">
           <span className="text-muted">
-            Available cash <span className="ml-1 font-semibold tnum text-ink">{fmt(cash)}</span>
+            Available cash <span className="ml-1 font-semibold tnum text-ink">{inr(cash)}</span>
           </span>
+          {side === "BUY" && estimateInr != null && estimateInr <= cash && (
+            <span className="text-muted">
+              After purchase{" "}
+              <span className="ml-1 font-semibold tnum text-ink">{inrPrecise(cash - estimateInr)}</span>
+            </span>
+          )}
           <span className="text-muted">
             You own{" "}
             <span className="ml-1 font-semibold tnum text-ink">
@@ -220,15 +352,14 @@ export function TradeTicket({
           ) : (
             <TrendingDown size={15} />
           )}
-          {side === "BUY" ? "Buy" : "Sell"} {qtyNum > 0 ? `${qtyNum} ` : ""}
-          {symbol || ""}
+          {side === "BUY" ? "Buy" : "Sell"} {qtyNum > 0 ? `${qtyNum} ` : ""} {symbol || ""}
         </button>
       </form>
 
       <p className="mt-3 flex items-start gap-1.5 text-[10.5px] leading-relaxed text-muted">
         <Receipt size={11} className="mt-0.5 shrink-0" />
-        Virtual money only — orders execute at the latest available market price and are recorded in your
-        transaction history. No real funds are involved.
+        Virtual money only — orders execute at the latest available price (may be delayed) and are recorded
+        with the FX rate used. No real funds are involved.
       </p>
     </Card>
   );

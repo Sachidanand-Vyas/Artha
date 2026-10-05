@@ -41,16 +41,18 @@ interface ApiHolding {
   symbol: string;
   name: string;
   sector: string;
-  country: "IN" | "US";
-  currency: "INR" | "USD";
+  country: string;
+  currency: string;          // NATIVE currency of avg_cost / ltp
   qty: number;
-  avg_cost: number;
-  invested: number;
-  ltp: number | null;
-  day_change: number | null;
+  avg_cost: number;          // native, per share
+  avg_cost_inr?: number | null; // INR cost basis per share (stored at execution)
+  fx_rate?: number | null;   // current INR rate for this currency
+  invested: number;          // INR: qty x stored INR cost basis
+  ltp: number | null;        // native latest price
+  day_change: number | null; // INR
   day_change_percent: number | null;
-  value: number | null;
-  unrealized_pnl: number | null;
+  value: number | null;      // INR: qty x ltp x fx
+  unrealized_pnl: number | null; // INR
   return_percent: number | null;
   weight_percent: number;
   available: boolean;
@@ -83,8 +85,10 @@ interface ApiTransaction {
   symbol: string;
   type: "BUY" | "SELL";
   qty: number;
-  price: number;
-  amount: number;
+  price: number;      // NATIVE currency, per share
+  amount: number;     // INR value at execution
+  currency: string;   // native currency of `price`
+  fx_rate: number;    // INR rate used at execution
   source: string; // 'trade' | 'import'
   timestamp: string; // ISO
 }
@@ -116,8 +120,12 @@ function mapHolding(h: ApiHolding): Holding {
     symbol: h.symbol,
     name: h.name,
     sector: h.sector,
+    country: h.country,
+    currency: h.currency,
     qty: h.qty,
     avgCost: h.avg_cost,
+    avgCostInr: h.avg_cost_inr ?? null,
+    fxRate: h.fx_rate ?? null,
     ltp: h.available ? h.ltp : null,
     dayChange: h.available ? h.day_change : null,
     dayChangePct: h.available ? h.day_change_percent : null,
@@ -274,6 +282,8 @@ export const portfolioService: PortfolioService = {
       qty: t.qty,
       price: t.price,
       amount: t.amount,
+      currency: t.currency || "INR",
+      fxRate: t.fx_rate ?? 1.0,
     }));
   },
 

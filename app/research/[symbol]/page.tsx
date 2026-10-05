@@ -7,6 +7,7 @@ import { Star } from "lucide-react";
 import type { Stock, StockPrediction, TimeRange } from "@/lib/types";
 import { stockService } from "@/lib/services/stockService";
 import { useAsync } from "@/lib/hooks/useAsync";
+import { formatClock, usePoll } from "@/lib/hooks/usePoll";
 import { useAppStore } from "@/lib/store/useAppStore";
 import { cn, currencyOf, formatShortDate, istMarketOpen, pct, signed, timeAgo } from "@/lib/utils";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -114,6 +115,14 @@ export default function ResearchPage() {
     [symbol],
   );
 
+  // Lightweight quote refresh (price/change only) — polls every 45s while the
+  // tab is visible; charts, fundamentals and technicals are NOT refetched.
+  const {
+    data: liveQuote,
+    lastUpdated,
+    error: quoteError,
+  } = usePoll(() => stockService.getQuote(symbol), [symbol]);
+
   const watched = useAppStore((s) => s.watchlist.includes(symbol));
   const toggle = useAppStore((s) => s.toggleWatchlist);
 
@@ -155,8 +164,16 @@ export default function ResearchPage() {
   }
 
   const fmt = currencyOf(stock.currency);
-  const rangePct = ((stock.price - stock.week52Low) / (stock.week52High - stock.week52Low)) * 100;
-  const asOf = stock.timestamp ? Date.parse(stock.timestamp) : NaN;
+  // Latest available quote wins; the full-analysis payload is the fallback.
+  const price = liveQuote?.price ?? stock.price;
+  const change = liveQuote?.change ?? stock.change;
+  const changePct = liveQuote?.changePercent ?? stock.changePct;
+  const dataAsOf = liveQuote?.timestamp ?? stock.timestamp;
+  const rangePct =
+    stock.week52High != null && stock.week52Low != null && stock.week52High > stock.week52Low
+      ? ((stock.price - stock.week52Low) / (stock.week52High - stock.week52Low)) * 100
+      : 0;
+  const asOf = dataAsOf ? Date.parse(dataAsOf) : NaN;
 
   return (
     <div className="space-y-6">
@@ -177,15 +194,19 @@ export default function ResearchPage() {
               Data as of {formatShortDate(asOf)} · source: {stock.source}
             </p>
           )}
+          <p className="mt-1 text-[11px] text-muted">
+            {lastUpdated ? `Quote last updated ${formatClock(lastUpdated)}` : "Waiting for the latest quote…"}
+            {quoteError ? " · refresh failed — showing last known values" : " · latest available · may be delayed"}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <div className="text-right">
-            <p className="text-3xl font-bold tracking-tight text-ink tnum">{fmt(stock.price)}</p>
+            <p className="text-3xl font-bold tracking-tight text-ink tnum">{fmt(price)}</p>
             <p className="mt-0.5 text-sm tnum">
-              <span className={stock.change >= 0 ? "text-pos" : "text-neg"}>
-                {signed(stock.change, 2)} ({pct(stock.changePct)})
+              <span className={change >= 0 ? "text-pos" : "text-neg"}>
+                {signed(change, 2)} ({pct(changePct)})
               </span>
-              <span className="ml-2 text-muted">latest available</span>
+              <span className="ml-2 text-muted">latest available · may be delayed</span>
             </p>
           </div>
           <button
@@ -351,7 +372,8 @@ export default function ResearchPage() {
                 <div className="mb-1.5 flex items-center justify-between text-xs">
                   <span className="text-muted">52-week range</span>
                   <span className="tnum text-secondary">
-                    {fmt(stock.week52Low)} – {fmt(stock.week52High)}
+                    {stock.week52Low != null ? fmt(stock.week52Low) : "N/A"} –{" "}
+                    {stock.week52High != null ? fmt(stock.week52High) : "N/A"}
                   </span>
                 </div>
                 <div className="relative h-1.5 rounded-full bg-surface3">

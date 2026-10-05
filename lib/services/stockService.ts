@@ -9,9 +9,11 @@
  */
 
 import type {
+  Quote,
   Stock,
   StockAnalysis,
   StockPrediction,
+  StockSearchResult,
   Technicals,
   TimeRange,
 } from "@/lib/types";
@@ -49,9 +51,9 @@ interface ApiStockSummary {
   symbol: string;
   name: string;
   exchange: string;
-  country: "IN" | "US";
+  country: string;
   sector: string;
-  currency: "INR" | "USD";
+  currency: string;
   price: number;
   change: number;
   change_percent: number;
@@ -103,6 +105,45 @@ interface ApiStockAnalysis extends ApiStockSummary {
 
 interface ApiCandleResponse {
   candles: ApiCandle[];
+  source: string;
+}
+
+/** GET /api/stocks/search — dynamic company search (no fixed universe). */
+interface ApiSearchResponse {
+  query: string;
+  results: {
+    symbol: string;
+    ticker: string;
+    name: string;
+    exchange: string;
+    country: string;
+    currency: string;
+    quote_type?: string;
+  }[];
+  source: string;
+}
+
+/** Latest quote payload (native price + currency + current INR FX rate). */
+interface ApiQuote {
+  symbol: string;
+  ticker: string;
+  name: string;
+  exchange: string;
+  country: string;
+  currency: string;
+  sector?: string | null;
+  price: number | null;
+  change: number | null;
+  change_percent: number | null;
+  timestamp: string | null;
+  fx_rate: number | null;
+  available: boolean;
+  source: string;
+  error?: string | null;
+}
+
+interface ApiQuotesResponse {
+  quotes: ApiQuote[];
   source: string;
 }
 
@@ -186,6 +227,38 @@ function mapAnalysis(b: ApiStockAnalysis): StockAnalysis {
   };
 }
 
+function mapQuote(b: ApiQuote): Quote {
+  return {
+    symbol: b.symbol,
+    ticker: b.ticker,
+    name: b.name,
+    exchange: b.exchange,
+    country: b.country,
+    currency: b.currency,
+    sector: b.sector ?? null,
+    price: b.price,
+    change: b.change,
+    changePercent: b.change_percent,
+    timestamp: b.timestamp,
+    fxRate: b.fx_rate,
+    available: b.available,
+    source: b.source,
+    error: b.error ?? null,
+  };
+}
+
+function mapSearchHit(r: ApiSearchResponse["results"][number]): StockSearchResult {
+  return {
+    symbol: r.symbol,
+    ticker: r.ticker,
+    name: r.name,
+    exchange: r.exchange,
+    country: r.country,
+    currency: r.currency,
+    quote_type: r.quote_type,
+  };
+}
+
 /* -------------------------------- Service -------------------------------- */
 
 /** Cache lifetimes per chart range (seconds of staleness the UI tolerates). */
@@ -200,6 +273,9 @@ const RANGE_TTL: Record<TimeRange, number> = {
 
 const ANALYSIS_TTL = 60_000;
 const UNIVERSE_TTL = 60_000;
+/** Quote/search caches are short: polling must actually re-fetch. */
+const QUOTE_TTL = 10_000;
+const SEARCH_TTL = 30_000;
 
 const enc = encodeURIComponent;
 
@@ -209,6 +285,12 @@ export interface StockService {
   getStock(symbol: string): Promise<StockAnalysis | undefined>;
   getCandles(symbol: string, range: TimeRange): Promise<GeneratedCandle[]>;
   getTechnicals(symbol: string): Promise<Technicals>;
+  /** Dynamic company search — debounced by the caller; [] = no matching company. */
+  searchStocks(query: string, limit?: number): Promise<StockSearchResult[]>;
+  /** Latest quote for one symbol (price/currency/FX). undefined = not found. */
+  getQuote(symbol: string): Promise<Quote | undefined>;
+  /** Batch latest quotes — used by page polling; bad symbols come back unavailable. */
+  getQuotes(symbols: string[]): Promise<Quote[]>;
 }
 
 export const stockService: StockService = {
@@ -252,5 +334,40 @@ export const stockService: StockService = {
       ANALYSIS_TTL,
     );
     return mapTechnicals(data.technical);
+  },
+
+  async searchStocks(query, limit = 10) {
+    const q = query.trim();
+    if (!q) return [];
+    // A genuine "no match" is an EMPTY result list, never an exception —
+    // exceptions (provider failure) propagate to the caller's error state.
+    const data = await apiGet<ApiSearchResponse>(
+      `/api/stocks/search?q=${enc(q)}&limit=${limit}`,
+      SEARCH_TTL,
+    );
+    return (data?.results ?? []).map(mapSearchHit);
+  },
+
+  async getQuote(symbol) {
+    try {
+      const data = await apiGet<ApiQuote>(
+        `/api/stocks/${enc(symbol)}/quote`,
+        QUOTE_TTL,
+      );
+      return mapQuote(data);
+    } catch (error) {
+      if (isNotFound(error)) return undefined; // no matching company
+      throw error; // provider failure -> caller keeps its last known values
+    }
+  },
+
+  async getQuotes(symbols) {
+    const unique = [...new Set(symbols.map((s) => s.trim()).filter(Boolean))];
+    if (unique.length === 0) return [];
+    const data = await apiGet<ApiQuotesResponse>(
+      `/api/stocks/quotes?symbols=${unique.map(enc).join(",")}`,
+      QUOTE_TTL,
+    );
+    return (data?.quotes ?? []).map(mapQuote);
   },
 };

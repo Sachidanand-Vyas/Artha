@@ -1,16 +1,17 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Bell, Command, Menu, Moon, Search, Sun } from "lucide-react";
-import { cn, formatFullDate, istMarketOpen } from "@/lib/utils";
+import { cn, currencyOf, formatFullDate, istMarketOpen } from "@/lib/utils";
 import { stockService } from "@/lib/services/stockService";
 import { marketService } from "@/lib/services/marketService";
 import { useAsync } from "@/lib/hooks/useAsync";
 import { useAppStore } from "@/lib/store/useAppStore";
 import { useAuthStore } from "@/lib/store/useAuthStore";
 import { toggleTheme, useTheme } from "@/lib/theme";
+import type { StockSearchResult } from "@/lib/types";
 
 const PAGE_TITLES: Record<string, string> = {
   "/": "Dashboard",
@@ -50,27 +51,63 @@ function MarketStatus() {
 function SearchBox({ onNavigate }: { onNavigate?: () => void }) {
   const [q, setQ] = useState("");
   const [focused, setFocused] = useState(false);
+  const [hits, setHits] = useState<StockSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const watchlist = useAppStore((s) => s.watchlist);
-  // Same services every other page uses — search prices always match Research.
+  // Known-universe rows only — used for prices/stars, NOT as the search set.
   const { data: stocks } = useAsync(() => stockService.getStocks(), []);
   const { data: indices } = useAsync(() => marketService.getIndices(), []);
 
-  const results = useMemo(() => {
-    if (!q.trim()) return { stocks: [], indices: [] };
-    const needle = q.trim().toLowerCase();
-    return {
-      stocks: (stocks ?? [])
-        .filter(
-          (s) =>
-            s.symbol.toLowerCase().includes(needle) ||
-            s.name.toLowerCase().includes(needle),
-        )
-        .slice(0, 6),
-      indices: (indices ?? []).filter((i) => i.symbol.toLowerCase().includes(needle)).slice(0, 3),
+  // Debounced DYNAMIC search: any listed company, fetched on demand — the
+  // frontend never preloads a stock list. Empty result = "no matching company".
+  useEffect(() => {
+    const term = q.trim();
+    let alive = true;
+    // State updates happen in the timer callback (debounced), never
+    // synchronously inside the effect body.
+    const timer = setTimeout(() => {
+      if (!term) {
+        setHits([]);
+        setSearched(false);
+        setSearchError(null);
+        setSearching(false);
+        return;
+      }
+      setSearching(true);
+      stockService
+        .searchStocks(term, 8)
+        .then((results) => {
+          if (!alive) return;
+          setHits(results);
+          setSearchError(null);
+        })
+        .catch((error: unknown) => {
+          if (!alive) return;
+          setSearchError(error instanceof Error ? error.message : "Search failed — please try again.");
+        })
+        .finally(() => {
+          if (!alive) return;
+          setSearching(false);
+          setSearched(true);
+        });
+    }, term ? 300 : 0);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
     };
-  }, [q, stocks, indices]);
+  }, [q]);
+
+  const indexHits = useMemo(() => {
+    if (!q.trim()) return [];
+    const needle = q.trim().toLowerCase();
+    return (indices ?? []).filter((i) => i.symbol.toLowerCase().includes(needle)).slice(0, 3);
+  }, [q, indices]);
+
+  const priceOf = (symbol: string) => stocks?.find((s) => s.symbol === symbol)?.price ?? null;
 
   const go = (path: string) => {
     router.push(path);
@@ -97,45 +134,63 @@ function SearchBox({ onNavigate }: { onNavigate?: () => void }) {
 
       {focused && q.trim() && (
         <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-edgestrong bg-surface3 shadow-2xl shadow-black/60">
-          {results.stocks.length === 0 && results.indices.length === 0 && (
+          {searching && hits.length === 0 && !searchError && (
+            <div className="px-4 py-5 text-center text-xs text-muted">Searching…</div>
+          )}
+          {searchError && !hits.length && (
+            <div className="px-4 py-5 text-center text-xs text-neg">{searchError}</div>
+          )}
+          {!searchError && !searching && searched && hits.length === 0 && indexHits.length === 0 && (
             <div className="px-4 py-6 text-center text-xs text-muted">
-              No matches for “{q}”
+              No matching company found for “{q}”
             </div>
           )}
-          {results.stocks.length > 0 && (
+          {hits.length > 0 && (
             <div className="px-1.5 py-1.5">
               <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted">
-                Stocks
+                Companies
               </div>
-              {results.stocks.map((s) => (
-                <button
-                  key={s.symbol}
-                  onMouseDown={() => go(`/research/${s.symbol}`)}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-surface2"
-                >
-                  <span>
-                    <span className="font-semibold text-ink">{s.symbol}</span>
-                    <span className="ml-2 text-xs text-muted">{s.name}</span>
-                  </span>
-                  <span className="flex items-center gap-2">
-                    {watchlist.includes(s.symbol) && (
-                      <span className="text-[10px] text-gold">★</span>
-                    )}
-                    <span className="text-xs tnum text-secondary">
-                      {s.currency === "INR" ? "₹" : "$"}
-                      {s.price.toFixed(2)}
+              {hits.map((s) => {
+                const price = priceOf(s.symbol);
+                return (
+                  <button
+                    key={`${s.symbol}-${s.ticker}`}
+                    onMouseDown={() => go(`/research/${s.symbol}`)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-surface2"
+                  >
+                    <span className="min-w-0">
+                      <span className="font-semibold text-ink">{s.symbol}</span>
+                      <span className="ml-2 truncate text-xs text-muted">{s.name}</span>
                     </span>
-                  </span>
-                </button>
-              ))}
+                    <span className="flex shrink-0 items-center gap-2">
+                      {watchlist.includes(s.symbol) && (
+                        <span className="text-[10px] text-gold">★</span>
+                      )}
+                      <span className="text-[10.5px] text-muted">
+                        {s.exchange} · {s.currency}
+                      </span>
+                      {price != null && (
+                        <span className="text-xs tnum text-secondary">
+                          {currencyOf(s.currency)(price)}
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
-          {results.indices.length > 0 && (
+          {!searchError && !searching && searched && hits.length === 0 && indexHits.length > 0 && (
+            <div className="border-t border-edge px-4 py-2 text-xs text-muted">
+              No matching company found — showing index matches below.
+            </div>
+          )}
+          {indexHits.length > 0 && (
             <div className="border-t border-edge px-1.5 py-1.5">
               <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted">
                 Indices
               </div>
-              {results.indices.map((i) => (
+              {indexHits.map((i) => (
                 <button
                   key={i.symbol}
                   onMouseDown={() => go("/markets")}

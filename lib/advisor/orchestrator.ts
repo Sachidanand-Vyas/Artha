@@ -516,7 +516,7 @@ function renderStock(plan: AdvisorPlan): string {
       return [
         ...header,
         "",
-        `**52-week range:** ${fmt(s.week52Low)} – ${fmt(s.week52High)}`,
+        `**52-week range:** ${s.week52Low != null ? fmt(s.week52Low) : "N/A"} – ${s.week52High != null ? fmt(s.week52High) : "N/A"}`,
         `Previous close ${fmt(s.price - s.change)} · latest session change ${signed(s.change, 2)} (${pct(s.changePct)}).`,
         "",
         `This is the provider's latest available price (delayed), not a live tick — ${asOfLine(s)}.`,
@@ -709,7 +709,7 @@ function renderPortfolio(plan: AdvisorPlan): string {
       ...head,
       "",
       `**${h.symbol} (${h.name})**`,
-      `• Quantity ${h.qty} · average cost ${inr(h.avgCost)} · latest price ${h.ltp != null ? inr(h.ltp) : NA}`,
+      `• Quantity ${h.qty} · average cost ${currencyOf(h.currency ?? "INR")(h.avgCost)} · latest price ${h.ltp != null ? currencyOf(h.currency ?? "INR")(h.ltp) : NA}`,
       `• Invested ${inr(Math.round(h.invested))} → value ${h.value != null ? inr(Math.round(h.value)) : NA} · return ${h.returnPct != null ? pct(h.returnPct) : NA} · weight ${h.weightPct.toFixed(1)}%`,
       "",
       "_Valued at the latest available market price — the same source as the Research page._",

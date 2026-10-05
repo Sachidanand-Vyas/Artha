@@ -13,6 +13,7 @@ import Link from "next/link";
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAsync } from "@/lib/hooks/useAsync";
+import { formatClock, usePoll } from "@/lib/hooks/usePoll";
 import {
   portfolioService,
   type OrderSide,
@@ -20,7 +21,7 @@ import {
 } from "@/lib/services/portfolioService";
 import { stockService } from "@/lib/services/stockService";
 import type { HistoryPoint, Holding, PortfolioSummary, Transaction } from "@/lib/types";
-import { cn, inr, pct } from "@/lib/utils";
+import { cn, currencyOf, inr, pct } from "@/lib/utils";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { TrendBadge } from "@/components/ui/Badge";
 import { EmptyState, ErrorState, PageHeader, SkeletonRows } from "@/components/ui/States";
@@ -84,7 +85,10 @@ export default function PortfolioPage() {
 
 /** Deep links from the dashboard: ?setup=virtual | manual | add */
 function PortfolioPageInner() {
-  const { data, loading, error, reload } = useAsync(loadPortfolioData, []);
+  // Auto-refresh: re-values the portfolio every 45s while the tab is visible
+  // (backend reuses its light quote cache). On failure the last known state
+  // is kept and a stale note is shown — a blip never blanks the page.
+  const { data, loading, error, reload, lastUpdated, stale } = usePoll(loadPortfolioData, []);
   const { data: stocks, loading: loadingStocks } = useAsync(() => stockService.getStocks(), []);
 
   const searchParams = useSearchParams();
@@ -105,7 +109,7 @@ function PortfolioPageInner() {
     reload();
   };
 
-  if (error) {
+  if (error && !data) {
     return (
       <div className="space-y-6">
         <PageHeader title="Portfolio" subtitle="Everything you hold, how it is performing, and what the numbers mean." />
@@ -167,14 +171,22 @@ function PortfolioPageInner() {
         title="Portfolio"
         subtitle="Everything you hold, how it is performing, and what the numbers mean."
         right={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setFlow(flow === "add" ? null : "add")}
-              className="btn-ghost !py-1.5 !px-3 text-xs"
-            >
-              + Add holding
-            </button>
-            <TrendBadge value={s.todayChange} pct={s.todayChangePct} />
+          <div className="flex flex-col items-end gap-1.5">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setFlow(flow === "add" ? null : "add")}
+                className="btn-ghost !py-1.5 !px-3 text-xs"
+              >
+                + Add holding
+              </button>
+              <TrendBadge value={s.todayChange} pct={s.todayChangePct} />
+            </div>
+            <span className="text-[11px] text-muted">
+              {lastUpdated ? `Last updated ${formatClock(lastUpdated)}` : "Loading latest prices…"}
+              {stale
+                ? " · refresh failed — showing last known values"
+                : " · latest available · may be delayed"}
+            </span>
           </div>
         }
       />
@@ -299,7 +311,14 @@ function PortfolioPageInner() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-edge/60">
-                  {holdings.map((h) => (
+                  {holdings.map((h) => {
+                    // Native currency for per-share figures; INR for totals.
+                    const fmtNative = currencyOf(h.currency ?? "INR");
+                    const fxTitle =
+                      h.currency && h.currency !== "INR" && h.fxRate
+                        ? `Converted to INR at 1 ${h.currency} = ₹${h.fxRate.toFixed(2)}`
+                        : undefined;
+                    return (
                     <tr key={h.symbol} className="transition-colors hover:bg-surface2/50">
                       <td className="px-2 py-3">
                         <Link href={`/research/${h.symbol}`} className="block">
@@ -308,11 +327,16 @@ function PortfolioPageInner() {
                         </Link>
                       </td>
                       <td className="px-2 py-3 text-right tnum text-secondary">{h.qty}</td>
-                      <td className="px-2 py-3 text-right tnum text-secondary">{inr(h.avgCost)}</td>
-                      <td className="px-2 py-3 text-right font-semibold tnum text-ink">
-                        {h.ltp != null ? inr(h.ltp) : "N/A"}
+                      <td className="px-2 py-3 text-right tnum text-secondary" title="Average buy price in the stock's native currency">
+                        {fmtNative(h.avgCost)}
                       </td>
                       <td className="px-2 py-3 text-right font-semibold tnum text-ink">
+                        {h.ltp != null ? fmtNative(h.ltp) : "N/A"}
+                      </td>
+                      <td
+                        className="px-2 py-3 text-right font-semibold tnum text-ink"
+                        title={fxTitle}
+                      >
                         {h.value != null ? inr(h.value) : "N/A"}
                       </td>
                       <td
@@ -351,7 +375,8 @@ function PortfolioPageInner() {
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -418,7 +443,9 @@ function PortfolioPageInner() {
                         </span>
                       </td>
                       <td className="px-2 py-2.5 text-right tnum text-secondary">{t.qty}</td>
-                      <td className="px-2 py-2.5 text-right tnum text-secondary">{inr(t.price)}</td>
+                      <td className="px-2 py-2.5 text-right tnum text-secondary">
+                        {currencyOf(t.currency ?? "INR")(t.price)}
+                      </td>
                       <td className="px-2 py-2.5 text-right font-semibold tnum text-ink">{inr(t.amount)}</td>
                     </tr>
                   ))}

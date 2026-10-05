@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowDown,
@@ -11,9 +11,10 @@ import {
   Star,
   Trash2,
 } from "lucide-react";
-import type { Stock } from "@/lib/types";
+import type { Quote, Stock, StockSearchResult } from "@/lib/types";
 import { useAppStore } from "@/lib/store/useAppStore";
 import { useAsync } from "@/lib/hooks/useAsync";
+import { formatClock, usePoll } from "@/lib/hooks/usePoll";
 import { stockService } from "@/lib/services/stockService";
 import { cn, currencyOf, marketCapLabel, num2 } from "@/lib/utils";
 import { Card } from "@/components/ui/Card";
@@ -76,10 +77,65 @@ function AddAssetMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const options = universe
-    .filter((s) => !watchlist.includes(s.symbol))
-    .filter((s) => s.symbol.toLowerCase().includes(q.toLowerCase()) || s.name.toLowerCase().includes(q.toLowerCase()))
-    .slice(0, 8);
+  const [hits, setHits] = useState<StockSearchResult[]>([]);
+  const [searched, setSearched] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  // Debounced dynamic search — any listed company, fetched on demand.
+  // State updates happen inside the timer callback, never synchronously in
+  // the effect body.
+  useEffect(() => {
+    const term = q.trim();
+    let alive = true;
+    const timer = setTimeout(() => {
+      if (!term) {
+        setHits([]);
+        setSearched(false);
+        setSearchError(null);
+        return;
+      }
+      stockService
+        .searchStocks(term, 8)
+        .then((r) => {
+          if (!alive) return;
+          setHits(r);
+          setSearchError(null);
+        })
+        .catch((e: unknown) => {
+          if (alive) setSearchError(e instanceof Error ? e.message : "Search failed.");
+        })
+        .finally(() => {
+          if (alive) setSearched(true);
+        });
+    }, term ? 300 : 0);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [q]);
+
+  type Option = { symbol: string; name: string; sub: string };
+  const options = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const out: Option[] = [];
+    const seen = new Set<string>();
+    const add = (symbol: string, name: string, sub: string) => {
+      if (watchlist.includes(symbol) || seen.has(symbol)) return;
+      seen.add(symbol);
+      out.push({ symbol, name, sub });
+    };
+    for (const s of universe) {
+      if (!needle || s.symbol.toLowerCase().includes(needle) || s.name.toLowerCase().includes(needle)) {
+        add(s.symbol, s.name, currencyOf(s.currency)(s.price));
+      }
+    }
+    if (needle) {
+      for (const h of hits) {
+        add(h.symbol, h.name, `${h.exchange} · ${h.currency}`);
+      }
+    }
+    return out.slice(0, 8);
+  }, [q, universe, hits, watchlist]);
 
   return (
     <div className="relative">
@@ -97,7 +153,7 @@ function AddAssetMenu({
                   autoFocus
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search the universe…"
+                  placeholder="Search any listed company…"
                   className="input !py-1.5 !pl-8 text-xs"
                 />
               </div>
@@ -105,7 +161,11 @@ function AddAssetMenu({
             <div className="max-h-72 overflow-y-auto p-1.5">
               {options.length === 0 && (
                 <p className="px-3 py-4 text-center text-xs text-muted">
-                  {watchlist.length >= universe.length ? "You track every asset in the universe." : "No matches."}
+                  {searchError
+                    ? searchError
+                    : q.trim() && searched
+                      ? "No matching company found."
+                      : "You track every asset in the universe — search for any company by name."}
                 </p>
               )}
               {options.map((s) => (
@@ -122,10 +182,7 @@ function AddAssetMenu({
                     <span className="font-semibold text-ink">{s.symbol}</span>
                     <span className="ml-2 text-xs text-muted">{s.name}</span>
                   </span>
-                  <span className="tnum text-xs text-secondary">
-                    {s.currency === "INR" ? "₹" : "$"}
-                    {s.price.toFixed(2)}
-                  </span>
+                  <span className="tnum text-xs text-secondary">{s.sub}</span>
                 </button>
               ))}
             </div>
@@ -141,6 +198,23 @@ export default function WatchlistPage() {
   const toggleWatchlist = useAppStore((s) => s.toggleWatchlist);
   const { data: universe, loading, error, reload } = useAsync(() => stockService.getStocks(), []);
 
+  // Current-quote refresh (every 45s while the tab is visible). The heavier
+  // universe payload (fundamentals/technicals) is NOT refetched — only the
+  // light quote endpoint is. On failure last-known values stay + a stale note.
+  const watchKey = watchlist.join(",");
+  const { data: quotes, lastUpdated, error: quoteError } = usePoll(
+    () => stockService.getQuotes(watchlist),
+    [watchKey],
+  );
+  const quoteBySymbol = useMemo(() => {
+    const map = new Map<string, Quote>();
+    for (const q of quotes ?? []) {
+      map.set(q.symbol, q);
+      if (q.ticker) map.set(q.ticker, q);
+    }
+    return map;
+  }, [quotes]);
+
   const [query, setQuery] = useState("");
   const [riskFilter, setRiskFilter] = useState<"All" | "Low" | "Moderate" | "High">("All");
   const [sortKey, setSortKey] = useState<SortKey>("symbol");
@@ -148,7 +222,59 @@ export default function WatchlistPage() {
 
   const rows = useMemo(() => {
     if (!universe) return [];
-    let list = universe.filter((s) => watchlist.includes(s.symbol));
+    // 1. Tracked-universe rows, refreshed with the latest polled quotes.
+    const merged: Stock[] = universe
+      .filter((s) => watchlist.includes(s.symbol))
+      .map((s) => {
+        const q = quoteBySymbol.get(s.symbol);
+        if (!q || q.price == null) return s;
+        return {
+          ...s,
+          price: q.price,
+          change: q.change ?? s.change,
+          changePct: q.changePercent ?? s.changePct,
+          currency: q.currency || s.currency,
+          timestamp: q.timestamp ?? s.timestamp,
+        };
+      });
+    // 2. Watchlist symbols found via search but not in the tracked universe.
+    const known = new Set(merged.map((s) => s.symbol));
+    for (const sym of watchlist) {
+      if (known.has(sym)) continue;
+      const q = quoteBySymbol.get(sym);
+      if (!q || q.price == null) continue; // unpriced -> never faked
+      known.add(sym);
+      merged.push({
+        symbol: sym,
+        name: q.name || sym,
+        exchange: q.exchange,
+        country: q.country,
+        sector: q.sector ?? "Other",
+        currency: q.currency,
+        price: q.price,
+        change: q.change ?? 0,
+        changePct: q.changePercent ?? 0,
+        marketCap: null,
+        pe: null,
+        pb: null,
+        roe: null,
+        roce: null,
+        debtToEquity: null,
+        dividendYield: null,
+        eps: null,
+        revenue: null,
+        netProfit: null,
+        week52High: null,
+        week52Low: null,
+        risk: null,
+        beta: null,
+        insight: "",
+        summary: "",
+        timestamp: q.timestamp ?? undefined,
+        source: q.source,
+      });
+    }
+    let list = merged;
     if (riskFilter !== "All") list = list.filter((s) => s.risk === riskFilter);
     if (query.trim()) {
       const q = query.toLowerCase();
@@ -180,7 +306,7 @@ export default function WatchlistPage() {
       }
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [universe, watchlist, query, riskFilter, sortKey, sortDir]);
+  }, [universe, watchlist, quoteBySymbol, query, riskFilter, sortKey, sortDir]);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -279,7 +405,10 @@ export default function WatchlistPage() {
               <tbody className="divide-y divide-edge/60">
                 {rows.map((s) => {
                   const fmt = currencyOf(s.currency);
-                  const rangePct = ((s.price - s.week52Low) / (s.week52High - s.week52Low)) * 100;
+                  const rangePct =
+                    s.week52High != null && s.week52Low != null && s.week52High > s.week52Low
+                      ? ((s.price - s.week52Low) / (s.week52High - s.week52Low)) * 100
+                      : null;
                   return (
                     <tr key={s.symbol} className="group transition-colors hover:bg-surface2/50">
                       <td className="px-3 py-3">
@@ -302,13 +431,17 @@ export default function WatchlistPage() {
                       </td>
                       <td className="px-3 py-3 text-right tnum text-secondary">{s.pe != null ? num2(s.pe) : "N/A"}</td>
                       <td className="px-3 py-3">
-                        <div className="flex flex-col items-start gap-1">
-                          <div className="flex w-full justify-between text-[10px] tnum text-muted">
-                            <span>{fmt(s.week52Low)}</span>
-                            <span>{fmt(s.week52High)}</span>
+                        {rangePct == null || s.week52Low == null || s.week52High == null ? (
+                          <span className="text-xs text-muted">N/A</span>
+                        ) : (
+                          <div className="flex flex-col items-start gap-1">
+                            <div className="flex w-full justify-between text-[10px] tnum text-muted">
+                              <span>{fmt(s.week52Low)}</span>
+                              <span>{fmt(s.week52High)}</span>
+                            </div>
+                            <ProgressBar value={rangePct} tone="info" className="!h-1" />
                           </div>
-                          <ProgressBar value={rangePct} tone="info" className="!h-1" />
-                        </div>
+                        )}
                       </td>
                       <td className="px-3 py-3">
                         <RiskBadge risk={s.risk} />
@@ -341,11 +474,15 @@ export default function WatchlistPage() {
 
         {!loading && rows.length > 0 && (
           <div className="flex items-center justify-between border-t border-edge px-4 py-2.5 text-[11px] text-muted">
-        <span>
-          Showing {rows.length} of {watchlist.length} tracked assets
-        </span>
-        <span>
-          {rows[0]?.source ? `${rows[0].source} · latest available prices · click any asset to open research` : "Click any asset to open full research"}
+        <span className="flex flex-wrap items-center gap-2">
+          <span>
+            Showing {rows.length} of {watchlist.length} tracked assets
+          </span>
+          <span>
+            {lastUpdated ? `Last updated ${formatClock(lastUpdated)}` : "Loading latest quotes…"}
+            {quoteError ? " · refresh failed — showing last known values" : ""} · latest available prices,
+            may be delayed · click any asset to open research
+          </span>
         </span>
           </div>
         )}

@@ -5,6 +5,8 @@ import { Activity } from "lucide-react";
 import { marketService } from "@/lib/services/marketService";
 import { stockService } from "@/lib/services/stockService";
 import { useAsync } from "@/lib/hooks/useAsync";
+import { formatClock, usePoll } from "@/lib/hooks/usePoll";
+import type { Quote } from "@/lib/types";
 import { cn, currencyOf, pct, signed } from "@/lib/utils";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Sparkline } from "@/components/ui/Sparkline";
@@ -17,18 +19,58 @@ export default function MarketsPage() {
   const { data: sectors, loading: loadingSectors, error: errSectors, reload: reloadSectors } = useAsync(() => marketService.getSectorPerformance(), []);
   const { data: stocks, loading: loadingStocks, error: errStocks, reload: reloadStocks } = useAsync(() => stockService.getStocks(), []);
 
+  // Latest-quote refresh: indices + tracked stocks in ONE light batch, every
+  // 45s while the tab is visible. Breadth/sector/universe payloads (history,
+  // fundamentals, technicals) are NOT refetched by this poll.
+  const quoteSymbols = useMemo(
+    () => [...(stocks ?? []).map((s) => s.symbol), ...(indices ?? []).map((i) => i.symbol)],
+    [stocks, indices],
+  );
+  const symbolsKey = quoteSymbols.join(",");
+  const { data: quotes, lastUpdated, error: quoteError } = usePoll(
+    () => stockService.getQuotes(quoteSymbols),
+    [symbolsKey],
+  );
+  const quoteBySymbol = useMemo(() => {
+    const map = new Map<string, Quote>();
+    for (const q of quotes ?? []) {
+      map.set(q.symbol, q);
+      if (q.ticker) map.set(q.ticker, q);
+    }
+    return map;
+  }, [quotes]);
+
   const movers = useMemo(() => {
     if (!stocks) return { gainers: [], losers: [] };
-    const sorted = [...stocks].sort((a, b) => b.changePct - a.changePct);
+    const withQuotes = stocks.map((s) => {
+      const q = quoteBySymbol.get(s.symbol);
+      if (!q || q.price == null) return s;
+      return {
+        ...s,
+        price: q.price,
+        change: q.change ?? s.change,
+        changePct: q.changePercent ?? s.changePct,
+        timestamp: q.timestamp ?? s.timestamp,
+      };
+    });
+    const sorted = [...withQuotes].sort((a, b) => b.changePct - a.changePct);
     return { gainers: sorted.slice(0, 5), losers: sorted.slice(-5).reverse() };
-  }, [stocks]);
+  }, [stocks, quoteBySymbol]);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Markets"
         subtitle="Indices, breadth and sector moves — latest available data from the market-data provider (may be delayed, not live)."
-        right={<StatusPill tone="info">Latest available</StatusPill>}
+        right={
+          <div className="flex flex-col items-end gap-1">
+            <StatusPill tone="info">Latest available</StatusPill>
+            <span className="text-[11px] text-muted">
+              {lastUpdated ? `Last updated ${formatClock(lastUpdated)}` : "Loading latest quotes…"}
+              {quoteError ? " · refresh failed — showing last known values" : ""}
+            </span>
+          </div>
+        }
       />
 
       {/* Indices */}
@@ -36,10 +78,14 @@ export default function MarketsPage() {
         <ErrorState onRetry={reloadIdx} />
       ) : (
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {(indices ?? Array.from({ length: 6 })).map((idx, i) =>
-          loadingIdx ? (
-            <SkeletonCard key={i} className="h-28" />
-          ) : (
+        {loadingIdx
+          ? Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} className="h-28" />)
+          : (indices ?? []).map((idx) => {
+              const live = quoteBySymbol.get(idx.symbol);
+              const value = live?.price ?? idx.value;
+              const change = live?.change ?? idx.change;
+              const changePct = live?.changePercent ?? idx.changePct;
+              return (
             <Card key={idx.symbol} hover className="p-4">
               <div className="flex items-start justify-between">
                 <div>
@@ -48,25 +94,25 @@ export default function MarketsPage() {
                     {idx.name} · {idx.exchange}
                   </p>
                 </div>
-                <Sparkline data={idx.spark} positive={idx.change >= 0} width={72} height={26} />
+                <Sparkline data={idx.spark} positive={change >= 0} width={72} height={26} />
               </div>
               <div className="mt-3 flex items-baseline justify-between">
                 <span className="text-xl font-bold text-ink tnum">
-                  {currencyOf(idx.currency)(idx.value)}
+                  {currencyOf(idx.currency)(value)}
                 </span>
                 <span
                   className={cn(
                     "text-sm font-semibold tnum",
-                    idx.change >= 0 ? "text-pos" : "text-neg",
+                    change >= 0 ? "text-pos" : "text-neg",
                   )}
                 >
-                  {pct(idx.changePct)}
-                  <span className="ml-1 text-[11px] font-medium opacity-80">{signed(idx.change, 0)}</span>
+                  {pct(changePct)}
+                  <span className="ml-1 text-[11px] font-medium opacity-80">{signed(change, 0)}</span>
                 </span>
               </div>
             </Card>
-          ),
-        )}
+              );
+            })}
       </div>
       )}
 

@@ -61,11 +61,13 @@ CREATE TABLE IF NOT EXISTS portfolios (
 );
 
 CREATE TABLE IF NOT EXISTS holdings (
-    user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    symbol             TEXT    NOT NULL,
-    quantity           REAL    NOT NULL,
-    average_buy_price  REAL    NOT NULL,
-    updated_at         TEXT    NOT NULL,
+    user_id                 INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    symbol                  TEXT    NOT NULL,
+    quantity                REAL    NOT NULL,
+    average_buy_price       REAL    NOT NULL,   -- NATIVE currency, per share
+    currency                TEXT    NOT NULL DEFAULT 'INR',
+    average_buy_price_inr   REAL    NOT NULL DEFAULT 0,  -- INR cost basis/share; 0 = legacy row
+    updated_at              TEXT    NOT NULL,
     PRIMARY KEY (user_id, symbol)
 );
 
@@ -75,9 +77,14 @@ CREATE TABLE IF NOT EXISTS transactions (
     symbol          TEXT    NOT NULL,
     type            TEXT    NOT NULL CHECK (type IN ('BUY', 'SELL')),
     quantity        REAL    NOT NULL,
-    execution_price REAL    NOT NULL,
+    execution_price REAL    NOT NULL,          -- NATIVE currency, per share
     source          TEXT    NOT NULL DEFAULT 'trade',   -- 'trade' | 'import'
-    timestamp       TEXT    NOT NULL
+    timestamp       TEXT    NOT NULL,
+    -- Multi-currency support: the FX rate captured AT EXECUTION time.
+    -- Legacy rows keep defaults that reproduce the old INR-only behaviour.
+    currency        TEXT    NOT NULL DEFAULT 'INR',
+    fx_rate         REAL    NOT NULL DEFAULT 1.0,   -- INR per 1 unit of `currency`
+    amount_inr      REAL                             -- NULL on legacy rows
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user   ON sessions(user_id);
@@ -107,6 +114,43 @@ def db() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """
+    Additive, idempotent migration for databases created before multi-currency
+    support. Existing rows keep working:
+      - transactions.currency  defaults to 'INR', fx_rate to 1.0  -> identical
+        behaviour for every pre-existing (INR) trade,
+      - transactions.amount_inr stays NULL on old rows; readers fall back to
+        quantity x execution_price (the old, INR-only meaning),
+      - holdings.currency defaults to 'INR'; average_buy_price_inr = 0 means
+        "legacy row" and readers treat the stored average as INR (the old
+        meaning) rather than silently re-converting it with today's FX rate.
+    """
+
+    def columns(table: str) -> set[str]:
+        try:
+            return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        except sqlite3.Error:
+            return set()
+
+    tx_cols = columns("transactions")
+    if tx_cols:
+        if "currency" not in tx_cols:
+            conn.execute("ALTER TABLE transactions ADD COLUMN currency TEXT NOT NULL DEFAULT 'INR'")
+        if "fx_rate" not in tx_cols:
+            conn.execute("ALTER TABLE transactions ADD COLUMN fx_rate REAL NOT NULL DEFAULT 1.0")
+        if "amount_inr" not in tx_cols:
+            conn.execute("ALTER TABLE transactions ADD COLUMN amount_inr REAL")
+
+    h_cols = columns("holdings")
+    if h_cols:
+        if "currency" not in h_cols:
+            conn.execute("ALTER TABLE holdings ADD COLUMN currency TEXT NOT NULL DEFAULT 'INR'")
+        if "average_buy_price_inr" not in h_cols:
+            conn.execute("ALTER TABLE holdings ADD COLUMN average_buy_price_inr REAL NOT NULL DEFAULT 0")
+
+
 def init_db() -> None:
     with db() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)

@@ -27,7 +27,7 @@ import {
 } from "recharts";
 import { History, Wallet } from "lucide-react";
 import { portfolioService, PortfolioNotSetupError } from "@/lib/services/portfolioService";
-import { useAsync } from "@/lib/hooks/useAsync";
+import { formatClock, usePoll } from "@/lib/hooks/usePoll";
 import { cn, inr, inrCompact, pct } from "@/lib/utils";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState, ErrorState, SkeletonRows } from "@/components/ui/States";
@@ -145,7 +145,8 @@ function fmtPricesAt(iso: string | null): string {
 }
 
 export function PortfolioOverview() {
-  const { data, loading, error, reload } = useAsync(loadOverview, []);
+  // Auto-refresh every 45s while visible; last known values kept on failure.
+  const { data, loading, error, reload, lastUpdated, stale } = usePoll(loadOverview, []);
 
   const chartData = useMemo(() => {
     if (data?.kind !== "ready" || !data.history) return [];
@@ -155,7 +156,7 @@ export function PortfolioOverview() {
   const fmtTick = (t: number) =>
     new Date(t).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit" });
 
-  if (error) {
+  if (error && !data) {
     return (
       <Card className="p-5">
         <ErrorState onRetry={reload} />
@@ -296,8 +297,12 @@ export function PortfolioOverview() {
 
       <div className="mt-3 flex items-center gap-2 text-[11px] text-muted">
         <Wallet size={12} />
-        The line above is your invested cost basis, built only from your own transactions — not an estimate of
-        past market value. Prices are latest available, may be delayed — not tick-by-tick live.
+        <span>
+          The line above is your invested cost basis, built only from your own transactions — not an estimate of
+          past market value. Prices are latest available, may be delayed — not tick-by-tick live.
+          {lastUpdated ? ` Last updated ${formatClock(lastUpdated)}.` : ""}
+          {stale ? " Refresh failed — showing last known values." : ""}
+        </span>
       </div>
     </Card>
   );

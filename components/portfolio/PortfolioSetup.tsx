@@ -8,11 +8,13 @@
  * Also renders the manual "add holding" form, used once a portfolio exists.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2, PieChart, Wallet } from "lucide-react";
-import type { Stock } from "@/lib/types";
+import type { Stock, StockSearchResult } from "@/lib/types";
 import { portfolioService, type PortfolioMode } from "@/lib/services/portfolioService";
+import { stockService } from "@/lib/services/stockService";
 import { ApiError } from "@/lib/services/api";
+import { currencyOf } from "@/lib/utils";
 import { Card, CardHeader } from "@/components/ui/Card";
 
 export function PortfolioSetup({ onDone }: { onDone: () => void }) {
@@ -98,10 +100,40 @@ export function AddHoldingForm({
   const [avgCost, setAvgCost] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<StockSearchResult[]>([]);
+
+  // Debounced dynamic search: any listed company can be imported, not only
+  // the preloaded universe (failures just leave the current options).
+  useEffect(() => {
+    const term = symbol.trim();
+    let alive = true;
+    // Debounced: state updates only inside the timer callback.
+    const timer = setTimeout(() => {
+      if (term.length < 2) {
+        setSuggestions([]);
+        return;
+      }
+      stockService
+        .searchStocks(term, 8)
+        .then((r) => {
+          if (alive) setSuggestions(r);
+        })
+        .catch(() => {
+          /* keep previous suggestions */
+        });
+    }, term.length < 2 ? 0 : 300);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [symbol]);
 
   const qtyNum = Number(qty);
   const costNum = Number(avgCost);
-  const known = stocks.some((s) => s.symbol === symbol.toUpperCase());
+  const stock = stocks.find((s) => s.symbol === symbol.toUpperCase());
+  const matched = suggestions.find((r) => r.symbol === symbol.toUpperCase());
+  const currency = stock?.currency ?? matched?.currency ?? "INR";
+  const known = Boolean(stock || matched);
   const valid =
     known && Number.isInteger(qtyNum) && qtyNum > 0 && Number.isFinite(costNum) && costNum > 0;
 
@@ -110,7 +142,7 @@ export function AddHoldingForm({
     if (busy) return;
     setError(null);
     if (!known) {
-      setError("Pick a tracked stock (e.g. RELIANCE, TCS, INFY).");
+      setError("Search for a listed stock first (e.g. RELIANCE, TSLA, INFY).");
       return;
     }
     if (!Number.isInteger(qtyNum) || qtyNum <= 0) {
@@ -135,8 +167,18 @@ export function AddHoldingForm({
     }
   }
 
-  const price = stocks.find((s) => s.symbol === symbol.toUpperCase())?.price;
-  const stock = stocks.find((s) => s.symbol === symbol.toUpperCase());
+  const price = stock?.price;
+  const fmtNative = currencyOf(currency);
+  const optionSymbols = (() => {
+    const seen = new Set<string>();
+    const out: { symbol: string; name: string }[] = [];
+    for (const s of [...stocks, ...suggestions.map((r) => ({ symbol: r.symbol, name: r.name }))]) {
+      if (seen.has(s.symbol)) continue;
+      seen.add(s.symbol);
+      out.push(s);
+    }
+    return out;
+  })();
 
   return (
     <Card className="p-5">
@@ -156,14 +198,18 @@ export function AddHoldingForm({
             className="input font-mono uppercase"
           />
           <datalist id="add-holding-symbols">
-            {stocks.map((s) => (
+            {optionSymbols.map((s) => (
               <option key={s.symbol} value={s.symbol}>
                 {s.name}
               </option>
             ))}
           </datalist>
           <p className="mt-1 text-[11px] text-muted">
-            {stock ? `Now ${price != null ? `₹${price.toFixed(2)}` : "price unavailable"}` : "Tracked NSE symbols"}
+            {stock
+              ? `Now ${price != null ? fmtNative(price) : "price unavailable"}`
+              : matched
+                ? `${matched.exchange} · ${matched.currency}`
+                : "Search any listed company"}
           </p>
         </div>
         <div>
@@ -179,7 +225,9 @@ export function AddHoldingForm({
           />
         </div>
         <div>
-          <label className="mb-1.5 block text-[12px] font-medium text-secondary">Average buy price (₹)</label>
+          <label className="mb-1.5 block text-[12px] font-medium text-secondary">
+            Average buy price ({currency === "INR" ? "₹" : currency})
+          </label>
           <input
             type="number"
             min={0.01}
@@ -189,6 +237,11 @@ export function AddHoldingForm({
             placeholder="2450"
             className="input tnum"
           />
+          {currency !== "INR" && (
+            <p className="mt-1 text-[11px] text-muted">
+              In {currency} — converted to an INR cost basis once, at today&apos;s rate.
+            </p>
+          )}
         </div>
 
         {error && (

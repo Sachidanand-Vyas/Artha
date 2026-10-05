@@ -1,10 +1,14 @@
 /**
  * Client for the OPTIONAL LLM layer (POST /api/advisor/answer).
  *
- * The provider + key live only in backend/.env (AI_PROVIDER / AI_API_KEY).
- * When no provider is configured — or the call fails for any reason — this
- * returns null and the Advisor falls back to its local knowledge layer, so
- * the demo never depends on a paid API.
+ * The provider and its key live only in backend/.env — Gemini via
+ * GEMINI_API_KEY / GEMINI_MODEL, or another provider via AI_PROVIDER /
+ * AI_API_KEY. Nothing here ever holds a key: the browser only posts the
+ * question, the trimmed history and the Artha data for that intent.
+ * When no provider is configured — or the call fails for any reason
+ * (missing key, timeout, rate limit, provider error) — this returns null and
+ * the Advisor falls back to its local knowledge layer, so the app never
+ * depends on a paid API.
  */
 
 import { apiPost } from "@/lib/services/api";

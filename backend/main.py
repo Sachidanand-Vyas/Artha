@@ -13,10 +13,16 @@ Run:
 
 from __future__ import annotations
 
+import logging
 import os
 
 from dotenv import load_dotenv
 
+# Basic logging so the temporary DEBUG trace can be observed in the terminal.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(name)s - %(message)s",
+)
 load_dotenv()
 
 from fastapi import FastAPI
@@ -24,11 +30,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from db import init_db
-from models.schemas import AdvisorAskIn, CalcIn, CalcResult, Candle, HoldingIn, StockAnalysis
+from models.schemas import (
+    AdvisorAskIn,
+    CalcIn,
+    CalcResult,
+    Candle,
+    HoldingIn,
+    InstrumentOut,
+    QuoteOut,
+    SearchOut,
+    StockAnalysis,
+)
 from routes_account import router as account_router
 from routes_news import router as news_router
 from services import llm
 from services import market_data as md
+from services import quotes as quote_service
 from services.calculations import calculate
 from services.fundamentals import extract_fundamentals
 from services.portfolio import value_portfolio
@@ -114,6 +131,13 @@ def finance_calculate(inp: CalcIn) -> CalcResult:
     return calculate(inp)          # ValueError -> 422 via the app handler
 
 
+# Intents whose answers must come from real Artha data. If the structured
+# context for one of these is missing (backend down, symbol not covered,
+# engine unreachable) the model is never called: the frontend's local
+# renderer already has the honest "data unavailable" reply.
+DATA_INTENTS = {"STOCK_ANALYSIS", "PORTFOLIO", "CALCULATION", "MARKET_DATA"}
+
+
 @app.get("/api/advisor/status")
 def advisor_status():
     """Whether an LLM provider is configured (never exposes the key)."""
@@ -123,16 +147,32 @@ def advisor_status():
 @app.post("/api/advisor/answer")
 def advisor_answer(payload: AdvisorAskIn):
     """
-    Optional LLM answer for the Advisor. `available: false` means no provider
-    is configured — the frontend then falls back to its local knowledge layer,
-    so the app runs with zero API keys.
+    Optional LLM answer for the Advisor (Gemini via google-genai, or another
+    configured provider). `available: false` means no provider is configured,
+    and `text: null` means the provider failed (missing key, timeout, rate
+    limit, error) or had nothing grounded to say — in both cases the frontend
+    falls back to its local knowledge layer, so the app runs with zero API
+    keys and never depends on the model.
     """
     if not llm.configured():
         return {"available": False, "text": None, "provider": None}
+    if payload.intent.strip().upper() in DATA_INTENTS and not payload.context:
+        # No Artha data for a data question -> local fallback, never a guess.
+        return {
+            "available": True,
+            "text": None,
+            "provider": llm.provider_name(),
+            "reason": "missing_context",
+        }
     try:
         text = llm.ask(payload.question, payload.history, payload.context)
     except Exception as exc:  # provider/network failure -> local fallback
-        return {"available": True, "text": None, "provider": llm.provider_name(), "error": str(exc)}
+        return {
+            "available": True,
+            "text": None,
+            "provider": llm.provider_name(),
+            "error": llm.safe_error(exc),  # short + key-redacted, never raw
+        }
     return {"available": True, "text": text, "provider": llm.provider_name()}
 
 
@@ -169,6 +209,53 @@ def _df_to_candles(df) -> list[Candle]:
 def list_stocks():
     """Universe listing: latest quotes + fundamentals for every registered symbol."""
     return list_universe()
+
+
+# ---------------------------------------------------------------------------
+# Universal stock search — dynamic, provider-backed.
+# Registered BEFORE /api/stocks/{symbol} so "search"/"quotes" are not eaten
+# by the path parameter. The registry stays a metadata cache, never a filter:
+# any publicly listed company can be found here.
+# ---------------------------------------------------------------------------
+@app.get("/api/stocks/search", response_model=SearchOut)
+def search_stocks(q: str = "", limit: int = 10) -> SearchOut:
+    """
+    GET /api/stocks/search?q=tesla
+
+    Returns matching instruments (symbol, provider ticker, name, exchange,
+    country, currency). An empty `results` list means "no matching company
+    found" — the UI shows that as its own state. Provider failure surfaces as
+    502 (handled globally), never as an empty result.
+    """
+    limit = max(1, min(int(limit), 25))
+    results = md.search_instruments(q, limit=limit)   # DataProviderError -> 502
+    return SearchOut(
+        query=(q or "").strip(),
+        results=[InstrumentOut(**r) for r in results],
+        source=md.PROVIDER_NAME,
+    )
+
+
+@app.get("/api/stocks/quotes")
+def stock_quotes(symbols: str = ""):
+    """
+    Batch latest quotes for frontend polling (comma-separated symbols, up to
+    50). Light path only: 5 days of daily bars behind a 30s cache — historical
+    charts, fundamentals and technicals are NOT touched by this endpoint.
+    """
+    requested = [s for s in (part.strip() for part in symbols.split(",")) if s][:50]
+    rows = quote_service.get_quotes(requested)
+    return {"quotes": rows, "source": md.PROVIDER_NAME}
+
+
+@app.get("/api/stocks/{symbol}/quote", response_model=QuoteOut)
+def stock_quote(symbol: str) -> QuoteOut:
+    """
+    Latest available quote for one symbol: native price + currency + current
+    INR FX rate + provider timestamp. Refreshes INDEPENDENTLY of the full
+    analysis endpoint (separate cache, light download).
+    """
+    return QuoteOut(**quote_service.get_quote(symbol))
 
 
 @app.get("/api/stocks/{symbol}")

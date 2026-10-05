@@ -40,6 +40,14 @@ export interface AiService {
 
 const engineDelay = () => delay(400 + Math.random() * 400);
 
+/**
+ * Intents whose answers must come from real Artha data (stock, portfolio,
+ * market, calculation). They are only handed to the optional LLM when the
+ * plan actually collected that data — otherwise the honest local reply wins
+ * and the model never has to guess a price, balance or calculation.
+ */
+const DATA_INTENTS = new Set(["STOCK_ANALYSIS", "PORTFOLIO", "CALCULATION", "MARKET_DATA"]);
+
 /** Tidy LLM output: strip fences / wrapping quotes some providers add. */
 const cleanLlmText = (raw: string): string => {
   let t = raw.trim();
@@ -82,14 +90,21 @@ export const aiService: AiService = {
     // 2. The local renderer always produces an honest answer from real data
     //    — it is the default mode and the fallback whenever the LLM is off.
     const local = renderLocal(plan);
-    // 3. Optional LLM formatting: askLlm posts to the backend (/api/advisor/answer),
-    //    which returns null unless a provider is configured in backend/.env.
-    //    It only rephrases — the structured context carries every number and
+    // 3. Grounding guard: a data question with no Artha data (backend down,
+    //    symbol not covered, engine unreachable, portfolio not set up) never
+    //    reaches the model — the local reply states the gap instead of letting
+    //    it be filled with invented numbers.
+    const context = buildLlmContext(plan);
+    if (plan.dataError || (DATA_INTENTS.has(plan.intent) && !context)) return local;
+    // 4. Optional LLM formatting: askLlm posts to the backend (/api/advisor/answer),
+    //    which returns null unless a provider (e.g. Gemini) is configured in
+    //    backend/.env — or whenever that provider fails or times out.
+    //    It only explains — the structured context carries every number and
     //    the system prompt forbids fabricating data or doing loose arithmetic.
     const llmText = await askLlm({
       question: prompt,
       history: history.map((h) => ({ role: h.role, content: h.text })),
-      context: buildLlmContext(plan),
+      context,
       intent: plan.intent,
     });
     const text = llmText ? cleanLlmText(llmText) : "";
