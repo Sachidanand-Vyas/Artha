@@ -140,6 +140,12 @@ export function detectIndexEntity(text: string): IndexEntity | null {
   if (/\b(share|stock)\s+market\b|\bmarket (today|now|performance|level|close|closed|open|status)\b|\bhow (is|are) (the )?markets?\b|\bmarket\b.*\b(today|up|down|fall|rise|perform)/.test(t)) {
     return "MARKET";
   }
+  if (
+  /\b(sectors?|industries|industry groups)\b/i.test(t) &&
+  /\b(growing|performing|outperforming|leading|gaining|strongest|weakest|trending|best|worst)\b/i.test(t)
+) {
+  return "MARKET";
+}
   return null;
 }
 
