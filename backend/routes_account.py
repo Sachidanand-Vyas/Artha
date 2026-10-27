@@ -252,24 +252,32 @@ def signup(payload: SignupIn) -> AuthOut:
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="Please enter a valid email address.")
 
+    
     with db() as conn:
         taken = conn.execute(
-            "SELECT username, email FROM users WHERE username = ? OR email = ?",
+            "SELECT username, email FROM users WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)",
             (username, email),
         ).fetchone()
+
         if taken is not None:
             which = "username" if taken["username"].lower() == username.lower() else "email"
-            raise HTTPException(status_code=409, detail=f"That {which} is already registered.")
+            raise HTTPException(
+                status_code=409,
+                detail=f"That {which} is already registered.",
+            )
+
         cur = conn.execute(
             """
             INSERT INTO users (username, email, password_hash, created_at)
             VALUES (?, ?, ?, ?)
+            RETURNING id
             """,
             (username, email, auth.hash_password(payload.password), utcnow()),
         )
-        user_id = cur.lastrowid
+        user_id = cur.fetchone()["id"]
 
     return _attach_token(_fetch_user(user_id), auth.create_session(user_id))
+
 
 
 @router.post("/api/auth/login", response_model=AuthOut)
